@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
 from forge_agent_mcp.gateway.store import GatewayStore
-from tests.conftest import EXPECTED_TOOLS, MANIFEST_PATH, TENANT
+from tests.conftest import EXPECTED_TOOLS, MANIFEST_PATH, PROJECT_ROOT, TENANT
 
 
 def test_stdio_serves_the_same_tools_without_auth_and_warns(
@@ -21,6 +22,7 @@ def test_stdio_serves_the_same_tools_without_auth_and_warns(
     """
 
     log_file = tmp_path / "stdio-stderr.log"
+    env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src")}
     transport = StdioTransport(
         sys.executable,
         [
@@ -34,6 +36,8 @@ def test_stdio_serves_the_same_tools_without_auth_and_warns(
             "--manifest",
             str(MANIFEST_PATH),
         ],
+        env=env,
+        cwd=str(PROJECT_ROOT),
         keep_alive=False,
         log_file=log_file,
     )
