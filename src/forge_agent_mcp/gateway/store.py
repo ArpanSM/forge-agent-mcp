@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,14 +15,21 @@ from typing import Any
 from ..corpus.manifest import Manifest
 from ..corpus.pdf import render_pdf
 from ..corpus.templates import build_documents, build_records
-from ..corpus.vocab import CaseType, Recommendation
+from ..corpus.vocab import CaseType, Decision, Recommendation
+from .approval import ApprovalClaims
+from .canonical import canonical_hash
 from .models import (
+    ApprovalRecord,
     AuditEvent,
     AuditEventType,
     AuditOutcome,
     CarrierView,
     CaseRecord,
+    CaseStatus,
     CitationView,
+    CreateDecisionInput,
+    CrmStage,
+    CrmStageRecord,
     DecisionRecord,
     DocumentBBox,
     DocumentPage,
@@ -29,6 +37,7 @@ from .models import (
     ExtractedField,
     ExtractionRecord,
     FlagRecord,
+    IdempotencyRecord,
     PolicyPack,
     RecommendationRecord,
     StoredRecord,
@@ -150,6 +159,19 @@ CREATE TABLE IF NOT EXISTS approvals (
     created_at TEXT NOT NULL,
     PRIMARY KEY (tenant_id, approval_id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS approvals_jti_idx ON approvals (tenant_id, jti);
+
+CREATE TABLE IF NOT EXISTS crm_stages (
+    tenant_id TEXT NOT NULL,
+    case_id TEXT NOT NULL,
+    crm_stage_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    decision_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, crm_stage_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS crm_stages_decision_idx
+    ON crm_stages (tenant_id, decision_id);
 
 CREATE TABLE IF NOT EXISTS audit (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,6 +215,43 @@ END;
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+class IdempotencyConflictError(Exception):
+    """The same key was already used with different canonical arguments."""
+
+
+class ApprovalReusedError(Exception):
+    """The approval token's ``jti`` was already consumed by a committed write."""
+
+
+class UnknownDecisionError(Exception):
+    """The decision is outside the four values the CRM mapping understands."""
+
+
+@dataclass(frozen=True)
+class DecisionOutcome:
+    crm_stage: CrmStage
+    case_status: CaseStatus
+
+
+DECISION_OUTCOMES: dict[Decision, DecisionOutcome] = {
+    "approve": DecisionOutcome(crm_stage="approved", case_status="approved"),
+    "conditional_approve": DecisionOutcome(
+        crm_stage="conditionally_approved", case_status="approved"
+    ),
+    "decline": DecisionOutcome(crm_stage="declined", case_status="declined"),
+    "request_documents": DecisionOutcome(
+        crm_stage="awaiting_documents", case_status="awaiting_documents"
+    ),
+}
+
+
+def decision_outcome(decision: Decision) -> DecisionOutcome:
+    try:
+        return DECISION_OUTCOMES[decision]
+    except KeyError as exc:
+        raise UnknownDecisionError(f"Unknown decision: {decision!r}") from exc
 
 
 class GatewayStore:
@@ -687,7 +746,292 @@ class GatewayStore:
             created_at=row["created_at"],
         )
 
+    def latest_crm_stage(self, tenant_id: str, case_id: str) -> CrmStageRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM crm_stages
+            WHERE tenant_id = ? AND case_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (tenant_id, case_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return CrmStageRecord(
+            crm_stage_id=row["crm_stage_id"],
+            case_id=row["case_id"],
+            stage=row["stage"],
+            decision_id=row["decision_id"],
+            created_at=row["created_at"],
+        )
+
+    def get_idempotency(
+        self, tenant_id: str, principal: str, tool: str, key: str
+    ) -> IdempotencyRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM idempotency
+            WHERE tenant_id = ? AND principal = ? AND tool = ? AND key = ?
+            """,
+            (tenant_id, principal, tool, key),
+        ).fetchone()
+        if row is None:
+            return None
+        return IdempotencyRecord(
+            tenant_id=row["tenant_id"],
+            principal=row["principal"],
+            tool=row["tool"],
+            key=row["key"],
+            args_hash=row["args_hash"],
+            result=DecisionRecord.model_validate_json(row["result_json"]),
+            created_at=row["created_at"],
+        )
+
+    def approval_is_used(self, tenant_id: str, jti: str) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM approvals
+            WHERE tenant_id = ? AND jti = ? AND used_at IS NOT NULL
+            """,
+            (tenant_id, jti),
+        ).fetchone()
+        return row is not None
+
+    def commit_decision(
+        self,
+        *,
+        tenant_id: str,
+        request: CreateDecisionInput,
+        claims: ApprovalClaims,
+        principal: str,
+        input_hash: str,
+    ) -> DecisionRecord:
+        """Write decision, CRM stage, approval use, idempotency and audit atomically.
+
+        The idempotency and single-use checks happen inside the same transaction as
+        the writes, so a retry cannot create a second decision. A same-key retry with
+        the same canonical arguments returns the stored result with ``replayed`` set;
+        different arguments raise ``IdempotencyConflictError``.
+        """
+
+        now = _now()
+        payload_hash = claims.payload_hash
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT args_hash, result_json FROM idempotency
+                WHERE tenant_id = ? AND principal = ? AND tool = ? AND key = ?
+                """,
+                (tenant_id, principal, "create_decision", request.idempotency_key),
+            ).fetchone()
+            if row is not None:
+                if row["args_hash"] != payload_hash:
+                    raise IdempotencyConflictError(
+                        "This idempotency key was already used with different arguments."
+                    )
+                stored = DecisionRecord.model_validate_json(row["result_json"]).model_copy(
+                    update={"replayed": True}
+                )
+                self._insert_audit(
+                    tenant_id=tenant_id,
+                    case_id=request.case_id,
+                    tool="create_decision",
+                    event="idempotent_replay",
+                    outcome="ok",
+                    principal=principal,
+                    input_hash=input_hash,
+                    output_hash=canonical_hash(stored),
+                    detail={
+                        "decision_id": stored.decision_id,
+                        "idempotency_key": request.idempotency_key,
+                        "source": "transaction",
+                    },
+                )
+                return stored
+
+            used = self._connection.execute(
+                """
+                SELECT 1 FROM approvals
+                WHERE tenant_id = ? AND jti = ? AND used_at IS NOT NULL
+                """,
+                (tenant_id, claims.jti),
+            ).fetchone()
+            if used is not None:
+                raise ApprovalReusedError("This approval token has already been used.")
+
+            outcome = decision_outcome(request.decision)
+            record = DecisionRecord(
+                decision_id=f"dec_{uuid.uuid4().hex[:12]}",
+                case_id=request.case_id,
+                decision=request.decision,
+                rationale=request.rationale,
+                conditions=request.conditions,
+                approver=claims.sub,
+                principal=principal,
+                created_at=now,
+            )
+            result_json = json.dumps(record.model_dump(mode="json"), sort_keys=True)
+            approval_record = ApprovalRecord(
+                tenant_id=tenant_id,
+                approval_id=f"apr_{uuid.uuid4().hex[:12]}",
+                case_id=request.case_id,
+                jti=claims.jti,
+                approver=claims.sub,
+                payload_hash=payload_hash,
+                expires_at=datetime.fromtimestamp(claims.exp, UTC).isoformat(timespec="seconds"),
+                used_at=now,
+                created_at=now,
+            )
+            idempotency_record = IdempotencyRecord(
+                tenant_id=tenant_id,
+                principal=principal,
+                tool="create_decision",
+                key=request.idempotency_key,
+                args_hash=payload_hash,
+                result=record,
+                created_at=now,
+            )
+
+            self._connection.execute(
+                """
+                INSERT INTO decisions (
+                    tenant_id, case_id, decision_id, decision, rationale,
+                    conditions_json, approver, principal, approval_jti,
+                    idempotency_key, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    request.case_id,
+                    record.decision_id,
+                    request.decision,
+                    request.rationale,
+                    json.dumps(request.conditions, sort_keys=True),
+                    claims.sub,
+                    principal,
+                    claims.jti,
+                    request.idempotency_key,
+                    now,
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO approvals (
+                    tenant_id, case_id, approval_id, jti, approver,
+                    payload_hash, expires_at, used_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    approval_record.tenant_id,
+                    approval_record.case_id,
+                    approval_record.approval_id,
+                    approval_record.jti,
+                    approval_record.approver,
+                    approval_record.payload_hash,
+                    approval_record.expires_at,
+                    approval_record.used_at,
+                    approval_record.created_at,
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO crm_stages (
+                    tenant_id, case_id, crm_stage_id, stage, decision_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    request.case_id,
+                    f"crm_{uuid.uuid4().hex[:12]}",
+                    outcome.crm_stage,
+                    record.decision_id,
+                    now,
+                ),
+            )
+            self._connection.execute(
+                """
+                UPDATE cases SET status = ?
+                WHERE tenant_id = ? AND case_id = ?
+                """,
+                (outcome.case_status, tenant_id, request.case_id),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO idempotency (
+                    tenant_id, principal, tool, key, args_hash, result_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    idempotency_record.tenant_id,
+                    idempotency_record.principal,
+                    idempotency_record.tool,
+                    idempotency_record.key,
+                    idempotency_record.args_hash,
+                    result_json,
+                    idempotency_record.created_at,
+                ),
+            )
+            self._insert_audit(
+                tenant_id=tenant_id,
+                case_id=request.case_id,
+                tool="create_decision",
+                event="write_committed",
+                outcome="ok",
+                principal=principal,
+                input_hash=input_hash,
+                output_hash=canonical_hash(record),
+                detail={
+                    "decision_id": record.decision_id,
+                    "decision": request.decision,
+                    "crm_stage": outcome.crm_stage,
+                    "case_status": outcome.case_status,
+                    "approver": claims.sub,
+                    "jti": claims.jti,
+                    "idempotency_key": request.idempotency_key,
+                    "payload_hash": payload_hash,
+                },
+            )
+        return record
+
     # -- audit -----------------------------------------------------------
+
+    def _insert_audit(
+        self,
+        *,
+        tenant_id: str,
+        case_id: str | None,
+        tool: str,
+        event: AuditEventType,
+        outcome: AuditOutcome,
+        principal: str,
+        input_hash: str | None = None,
+        output_hash: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> int:
+        """Insert one audit row without opening a transaction of its own."""
+
+        cursor = self._connection.execute(
+            """
+            INSERT INTO audit (
+                tenant_id, case_id, tool, event, outcome, principal,
+                input_hash, output_hash, detail_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tenant_id,
+                case_id,
+                tool,
+                event,
+                outcome,
+                principal,
+                input_hash,
+                output_hash,
+                json.dumps(detail or {}, sort_keys=True),
+                _now(),
+            ),
+        )
+        return int(cursor.lastrowid)
 
     def append_audit(
         self,
@@ -703,27 +1047,17 @@ class GatewayStore:
         detail: dict[str, Any] | None = None,
     ) -> int:
         with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """
-                INSERT INTO audit (
-                    tenant_id, case_id, tool, event, outcome, principal,
-                    input_hash, output_hash, detail_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    tenant_id,
-                    case_id,
-                    tool,
-                    event,
-                    outcome,
-                    principal,
-                    input_hash,
-                    output_hash,
-                    json.dumps(detail or {}, sort_keys=True),
-                    _now(),
-                ),
+            return self._insert_audit(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                tool=tool,
+                event=event,
+                outcome=outcome,
+                principal=principal,
+                input_hash=input_hash,
+                output_hash=output_hash,
+                detail=detail,
             )
-            return int(cursor.lastrowid)
 
     def list_audit(self, tenant_id: str, case_id: str, *, limit: int = 100) -> list[AuditEvent]:
         rows = self._connection.execute(

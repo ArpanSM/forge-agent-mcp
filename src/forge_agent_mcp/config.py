@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     gateway_tenant_id: str = "tenant_northwind"
     gateway_host: str = "127.0.0.1"
     gateway_port: int = 8765
+    gateway_console_issuer: str = "forge-console"
+    forge_approval_secret: SecretStr | None = None
+    gateway_approval_ttl_seconds: int = 900
 
 
 def _secret(value: SecretStr | None) -> str | None:
