@@ -16,6 +16,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "reportlab>=4.2",
     "pymupdf>=1.24",
+    "fastmcp==4.1.6",
+    "mcp==2.3.0",
+    "PyJWT>=2.8",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]

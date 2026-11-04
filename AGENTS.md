@@ -24,4 +24,7 @@ make install   # editable install with dev dependencies
 make corpus    # regenerate the synthetic corpus into data/corpus/
 make test      # pytest
 make lint      # ruff
+make gateway   # FastMCP gateway over Streamable HTTP
+make gateway-client # client demo against a running gateway
+make gateway-demo   # in-process server + client demo
 ```
