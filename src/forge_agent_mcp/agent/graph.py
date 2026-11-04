@@ -261,8 +261,6 @@ def build_case_graph(
             policy = PolicyPack.model_validate(state["policy"])
             packet = load_case_packet(case_id, root)
             flags = [RuleFlag.model_validate(item) for item in state.get("flags") or []]
-            gaps = list(state.get("gaps") or [])
-            recommendation = recommend(flags, evidence_gaps=gaps)
             review = _review(
                 case_id=case_id,
                 case_type=case.case_type,
@@ -271,6 +269,7 @@ def build_case_graph(
                 packet=packet,
                 flags=flags,
             )
+            recommendation = review.recommendation
             gateway.record_recommendation(
                 case_id,
                 recommendation.recommendation,

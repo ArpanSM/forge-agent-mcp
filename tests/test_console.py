@@ -248,6 +248,21 @@ def test_approving_a_hard_stop_is_refused_by_the_service(generated_corpus, tmp_p
     assert fake.read_case(ONBOARDING_HARD_STOP).decision is None
 
 
+def test_requesting_documents_on_a_hard_stop_is_also_refused(generated_corpus, tmp_path) -> None:
+    client, fake, _service = _console(generated_corpus, tmp_path)
+    _run(client, ONBOARDING_HARD_STOP)
+
+    response = _decide(
+        client,
+        ONBOARDING_HARD_STOP,
+        action="request_documents",
+        note="A hard stop cannot be parked as a document request.",
+    )
+
+    assert response.status_code == 409
+    assert fake.decision_calls == []
+
+
 def test_request_documents_path_sets_awaiting_documents(generated_corpus, tmp_path) -> None:
     client, fake, _service = _console(generated_corpus, tmp_path)
     _run(client, INVOICE_MISSING_DOCUMENT)

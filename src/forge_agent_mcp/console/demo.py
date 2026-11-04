@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import secrets
+import socket
 import threading
 import time
 from pathlib import Path
@@ -55,6 +56,17 @@ def _stop_server(server: uvicorn.Server, thread: threading.Thread) -> None:
     thread.join(timeout=5)
 
 
+def _choose_port(host: str, preferred: int) -> int:
+    """Use the preferred port when free, otherwise a free ephemeral port."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host, preferred))
+        except OSError:
+            probe.bind((host, 0))
+        return int(probe.getsockname()[1])
+
+
 def _ensure_corpus(manifest: Any, corpus_dir: Path) -> CorpusIndex:
     index_path = corpus_dir / "corpus.json"
     if not index_path.is_file():
@@ -95,8 +107,9 @@ def _print_walkthrough(console_url: str, gateway_url: str) -> None:
         "     and recommendation. Approve it and watch the audit trail gain write_committed.\n"
         "  3. Pick the Northgate invoice case. It recommends request documents because of the\n"
         "     arithmetic and POD mismatch; request documents and confirm awaiting_documents.\n"
-        "  4. Open Cedar Pine to see a hard stop: approve and conditional approve are disabled.\n"
+        "  4. Open Cedar Pine to see a hard stop: only decline is available.\n"
         "  5. Press Ctrl+C here when you are done.\n"
+        "\n  Headless completion: make demo-auto\n"
     )
 
 
@@ -125,9 +138,9 @@ def run_demo(args: argparse.Namespace) -> int:
         _reset([gateway_db, checkpoint_db])
 
     host = args.gateway_host or settings.gateway_host
-    gateway_port = args.gateway_port or settings.gateway_port
+    gateway_port = args.gateway_port or _choose_port(host, settings.gateway_port)
     console_host = args.console_host or settings.console_host
-    console_port = args.console_port or settings.console_port
+    console_port = args.console_port or _choose_port(console_host, settings.console_port)
     gateway_url = f"http://{host}:{gateway_port}/mcp"
     console_url = f"http://{console_host}:{console_port}"
 

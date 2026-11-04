@@ -89,8 +89,6 @@ class CaseDetail:
     def recommended_action(self) -> Decision | None:
         if self.result and self.result.recommendation:
             return self.result.recommendation.decision
-        if self.view.recommendation:
-            return self.view.recommendation.recommendation  # type: ignore[return-value]
         return None
 
 

@@ -127,8 +127,7 @@ the recommendation and conditions, the decision form, and the audit preview. The
 mints two things only after the reviewer acts: the single-use HMAC approval token bound to
 the case, decision and payload, and a short-lived `freight:approve` bearer token for the
 decision call. The long-lived agent token only carries `freight:read` and `freight:write`.
-Hard stops cannot be approved from the UI or the service; the reviewer can decline or
-request documents.
+Hard stops cannot be approved from the UI or the service; the reviewer must decline.
 
 ```bash
 make demo       # gateway + agent + console; two cases wait at the approval interrupt

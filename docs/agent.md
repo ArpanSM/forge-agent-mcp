@@ -75,9 +75,10 @@ The console offers approve, conditional approve, decline and request documents. 
 enforces the same restrictions as the UI:
 
 - A hard-stop flag (watchlist, inactive authority, identity mismatch, expired/underinsured
-  insurance, duplicate invoice) blocks approve and conditional approve. Only decline or
-  request documents are available.
-- A document-instruction injection blocks approval; the text is quarantined.
+  insurance, duplicate invoice) blocks approval and document requests. Decline the case;
+  a hard stop can never be approved.
+- A document-instruction injection blocks approval; the text is quarantined, so the reviewer
+  can request documents or decline.
 - A missing required document blocks approval; request documents or decline.
 - A conditional approval requires at least one condition.
 - Other high or medium flags allow a human override with a written note; the recommendation

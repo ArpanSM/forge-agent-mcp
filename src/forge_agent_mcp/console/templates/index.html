@@ -10,8 +10,7 @@
 </div>
 
 <div class="side-grid">
-  <section id="queue-panel" class="queue-panel"
-           hx-get="/" hx-trigger="every 20s" hx-select="#queue-panel" hx-target="#queue-panel" hx-swap="outerHTML">
+  <section id="queue-panel" class="queue-panel">
     <div class="card-head" style="padding-bottom:11px">
       <div>
         <h2>Review queue</h2>
@@ -106,13 +105,13 @@
         <li>Approve, conditionally approve, decline or request documents in the decision panel.</li>
         <li>The console mints the approval token, resumes the graph and shows the committed decision and audit chain.</li>
       </ol>
-      <p class="note-hint" style="margin-top:8px">The clean onboarding case recommends <strong>approve</strong>. The Northgate invoice recommends <strong>request documents</strong>. Cedar Pine is a hard stop: only decline or request documents are available.</p>
+      <p class="note-hint" style="margin-top:8px">The clean onboarding case recommends <strong>approve</strong>. The Northgate invoice recommends <strong>request documents</strong>. Cedar Pine is a hard stop: only decline is available.</p>
     </div>
 
     <div class="side-card">
       <div class="side-title"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Decision rules</div>
       <ul class="side-list">
-        <li>Any hard stop → decline or request documents; never approve.</li>
+        <li>Any hard stop → decline; never approve.</li>
         <li>Two or more high flags → hold; missing documents always request documents.</li>
         <li>One high flag or a medium flag → conditional approve.</li>
         <li>The deterministic rule engine owns severity. The model may explain, not override.</li>

@@ -10,11 +10,10 @@ from ..agent.models import (
     ApprovalAction,
     CaseResult,
 )
+from ..corpus.manifest import Manifest
+from ..corpus.models import CorpusIndex
 from ..corpus.vocab import Decision, Recommendation
-from ..gateway.approval import (
-    APPROVAL_ALGORITHM,
-    ApprovalTokenIssuer,
-)
+from ..gateway.approval import ApprovalTokenIssuer
 from ..gateway.auth import APPROVE_SCOPE, READ_SCOPE, LocalTokenIssuer
 from ..gateway.models import AuditEvent, CaseView, FlagRecord
 from .models import (
@@ -44,7 +43,8 @@ ALL_ACTIONS: list[Decision] = [
     "decline",
     "request_documents",
 ]
-BLOCKED_ACTIONS: list[Decision] = ["decline", "request_documents"]
+HOLD_ACTIONS: list[Decision] = ["decline", "request_documents"]
+HARD_STOP_ACTIONS: list[Decision] = ["decline"]
 
 
 class ConsoleError(Exception):
@@ -79,7 +79,7 @@ def blocked_reason(flags: Sequence[FlagRecord] | Sequence[object]) -> str | None
     codes = {getattr(flag, "code", "") for flag in flags}
     if codes & HARD_STOP_CODES:
         return (
-            "A hard-stop flag blocks approval. Decline the case or request documents; "
+            "A hard-stop flag blocks approval and document requests. Decline the case; "
             "a hard stop can never be approved."
         )
     if codes & UNTRUSTED_CODES:
@@ -93,6 +93,17 @@ def blocked_reason(flags: Sequence[FlagRecord] | Sequence[object]) -> str | None
             "funding cannot be approved from an incomplete packet."
         )
     return None
+
+
+def allowed_actions(flags: Sequence[FlagRecord] | Sequence[object]) -> list[Decision]:
+    """Return the decisions the console will accept for this evidence."""
+
+    codes = {getattr(flag, "code", "") for flag in flags}
+    if codes & HARD_STOP_CODES:
+        return list(HARD_STOP_ACTIONS)
+    if codes & (UNTRUSTED_CODES | MISSING_DOCUMENT_CODES):
+        return list(HOLD_ACTIONS)
+    return list(ALL_ACTIONS)
 
 
 class ConsoleService:
@@ -190,13 +201,10 @@ class ConsoleService:
                 ) from exc
             raise ConsoleError(exc.code, exc.message, status_code=502) from exc
         result = self.runner.get(case_id)
-        if result is not None and result.audit:
-            audit = list(result.audit)
-        else:
-            try:
-                audit = self.gateway.get_audit(case_id, limit=200).events
-            except GatewayToolError:
-                audit = []
+        try:
+            audit = self.gateway.get_audit(case_id, limit=200).events
+        except GatewayToolError:
+            audit = list(result.audit) if result is not None else []
         flags = result.flags if result is not None else view.flags
         blocker = blocked_reason(flags)
         return CaseDetail(
@@ -204,7 +212,7 @@ class ConsoleService:
             result=result,
             audit=list(audit),
             fields=result.fields() if result is not None else [],
-            allowed_actions=list(BLOCKED_ACTIONS if blocker else ALL_ACTIONS),
+            allowed_actions=allowed_actions(flags),
             blocker=blocker,
         )
 
@@ -284,8 +292,13 @@ class ConsoleService:
                 status_code=409,
             )
         blocker = blocked_reason(current.flags)
-        if blocker and decision in {"approve", "conditional_approve"}:
-            raise ConsoleError("decision_blocked", blocker, status_code=409)
+        allowed = allowed_actions(current.flags)
+        if decision not in allowed:
+            raise ConsoleError(
+                "decision_blocked",
+                blocker or f"The {decision} action is not available for this case.",
+                status_code=409,
+            )
 
         recommendation = current.recommendation
         if recommendation is None:
@@ -302,7 +315,7 @@ class ConsoleService:
                     "A conditional approval requires at least one condition.",
                     status_code=409,
                 )
-        elif decision == "approve" or decision == "decline":
+        elif decision in {"approve", "decline"}:
             cleaned_conditions = []
         elif not cleaned_conditions:
             cleaned_conditions = list(recommendation.conditions)
@@ -369,12 +382,12 @@ class ConsoleService:
         return rationale
 
 
-def catalog_from_corpus(manifest: object, index: object) -> list[CaseCatalogEntry]:
+def catalog_from_corpus(manifest: Manifest, index: CorpusIndex) -> list[CaseCatalogEntry]:
     """Build the console queue from the generated corpus index."""
 
-    carriers = {carrier.carrier_id: carrier for carrier in manifest.carriers}  # type: ignore[attr-defined]
+    carriers = {carrier.carrier_id: carrier for carrier in manifest.carriers}
     entries: list[CaseCatalogEntry] = []
-    for case in index.cases:  # type: ignore[attr-defined]
+    for case in index.cases:
         carrier = carriers[case.carrier_id]
         entries.append(
             CaseCatalogEntry(
@@ -387,11 +400,12 @@ def catalog_from_corpus(manifest: object, index: object) -> list[CaseCatalogEntr
 
 
 __all__ = [
-    "APPROVAL_ALGORITHM",
     "ALL_ACTIONS",
-    "BLOCKED_ACTIONS",
+    "HARD_STOP_ACTIONS",
+    "HOLD_ACTIONS",
     "ConsoleError",
     "ConsoleService",
+    "allowed_actions",
     "blocked_reason",
     "catalog_from_corpus",
     "decision_label",
