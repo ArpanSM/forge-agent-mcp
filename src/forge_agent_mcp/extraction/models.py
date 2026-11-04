@@ -23,6 +23,15 @@ DocumentType = Literal[
 
 BBox = tuple[float, float, float, float]
 
+ExtractionCode = Literal[
+    "unclassified_document",
+    "missing_field",
+    "schema_error",
+    "invalid_citation",
+    "document_missing",
+    "provider_error",
+]
+
 
 class Citation(StrictModel):
     """The source location and verbatim quote for one extracted value.
@@ -63,18 +72,12 @@ class DocumentExtraction(StrictModel):
     status: Literal["extracted", "needs_more_info"]
     fields: dict[str, ExtractedValue] = Field(default_factory=dict)
     error: str | None = None
+    error_code: ExtractionCode | None = None
 
 
 class ExtractionIssue(StrictModel):
     document_id: str | None = None
-    code: Literal[
-        "unclassified_document",
-        "missing_field",
-        "schema_error",
-        "invalid_citation",
-        "document_missing",
-        "provider_error",
-    ]
+    code: ExtractionCode
     message: str
 
 
@@ -98,5 +101,6 @@ __all__ = [
     "DocumentExtraction",
     "DocumentType",
     "ExtractedValue",
+    "ExtractionCode",
     "ExtractionIssue",
 ]

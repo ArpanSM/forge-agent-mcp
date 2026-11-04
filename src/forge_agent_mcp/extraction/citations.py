@@ -36,6 +36,8 @@ class PageText:
     number: int
     text: str
     words: tuple[Word, ...]
+    width: float
+    height: float
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,8 @@ class DocumentText:
                             Word(text=word[4], bbox=tuple(word[:4]))  # type: ignore[arg-type]
                             for word in page.get_text("words")
                         ),
+                        width=page.rect.width,
+                        height=page.rect.height,
                     )
                     for index, page in enumerate(pdf, start=1)
                 )
