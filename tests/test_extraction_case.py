@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -8,6 +9,24 @@ from forge_agent_mcp.extraction.citations import verify_citation
 from forge_agent_mcp.extraction.extractor import ExtractionError, extract_case
 from forge_agent_mcp.extraction.models import CaseExtraction
 from forge_agent_mcp.providers.fake import FakeProvider
+
+
+def _provider_payload(truth, document) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for field in truth.expected_fields:
+        document_type, key = field.field.split(".", 1)
+        if document_type != document.document_type:
+            continue
+        payload[key] = {
+            "value": field.value,
+            "citation": {
+                "document_id": field.citation.document_id,
+                "page": field.citation.page,
+                "bbox": field.citation.bbox,
+                "quote": field.value,
+            },
+        }
+    return payload
 
 
 def test_extract_case_classifies_documents_and_keeps_citations(generated_corpus) -> None:
@@ -74,3 +93,20 @@ def test_extract_case_becomes_needs_more_info_after_two_schema_failures(
     assert len(report.issues) == 5
     assert {issue.code for issue in report.issues} == {"schema_error"}
     assert len(provider.calls) == 10
+
+
+def test_extract_case_uses_provider_output_when_it_is_valid(generated_corpus) -> None:
+    _manifest, result = generated_corpus
+    truth = result.cases["case_onb_ridgeline"]
+    provider = FakeProvider()
+    for document in truth.documents:
+        provider.queue_structured(_provider_payload(truth, document))
+
+    report = extract_case("case_onb_ridgeline", result.root, provider=provider)
+
+    assert report.status == "extracted"
+    assert report.provider == "fake"
+    assert report.issues == []
+    assert len(provider.calls) == 5
+    assert all(document.fields for document in report.documents)
+    assert report.documents[0].fields["legal_name"].value == "Ridgeline Haulage LLC"
