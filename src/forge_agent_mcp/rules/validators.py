@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from ..corpus.manifest import INVOICE_DOCUMENTS, ONBOARDING_DOCUMENTS
-from ..corpus.models import WatchlistRecord
+from ..corpus.models import PriorInvoiceRecord, WatchlistRecord
 from ..extraction.models import CaseExtraction, DocumentExtraction, ExtractedValue
 from .catalog import DOCUMENT_ORDER, DOCUMENT_TITLES, make_flag
 from .corpus import CasePacket
@@ -21,6 +21,7 @@ from .values import (
     normalize_name,
     parse_date,
     parse_money,
+    parse_weight,
 )
 
 AUTO_LIABILITY_MINIMUM = Decimal("1000000.00")
@@ -172,6 +173,196 @@ def validate_bank(documents: Documents, as_of: date) -> list[RuleFlag]:
             )
         )
     return flags
+
+
+def validate_duplicates(documents: Documents, packet: CasePacket) -> list[RuleFlag]:
+    record = packet.record("prior_invoices")
+    if not isinstance(record, PriorInvoiceRecord):
+        return []
+
+    number_value = documents.field("invoice", "invoice_number")
+    current_number = number_value.value.strip().casefold() if number_value is not None else None
+    number_match = next(
+        (
+            (index, prior)
+            for index, prior in enumerate(record.invoices)
+            if current_number is not None and prior.invoice_number.strip().casefold() == current_number
+        ),
+        None,
+    )
+
+    invoice_document = packet.document_by_type("invoice")
+    current_hash = invoice_document.content_hash if invoice_document is not None else None
+    hash_match = next(
+        (
+            (index, prior)
+            for index, prior in enumerate(record.invoices)
+            if current_hash is not None and prior.document_hash == current_hash
+        ),
+        None,
+    )
+    if number_match is None and hash_match is None:
+        return []
+
+    details: list[str] = []
+    if number_match is not None and number_value is not None:
+        _index, prior = number_match
+        details.append(
+            f"Invoice {prior.invoice_number} was already submitted on "
+            f"{prior.invoice_date.isoformat()} for load {prior.load_number}."
+        )
+    if hash_match is not None:
+        _index, prior = hash_match
+        details.append(f"Invoice document hash matches prior invoice {prior.invoice_number}.")
+
+    if number_match is not None and number_value is not None:
+        rule_id = "duplicate.invoice_number"
+        evidence = evidence_for(number_value, "invoice")
+    else:
+        assert hash_match is not None
+        rule_id = "duplicate.document_hash"
+        evidence = Evidence(
+            record_id=record.record_id,
+            record_path=f"invoices[{hash_match[0]}].document_hash",
+        )
+    return [
+        make_flag(
+            "duplicate_invoice",
+            rule_id=rule_id,
+            details=" ".join(details),
+            evidence=evidence,
+        )
+    ]
+
+
+LINE_ITEM_KEYS = ("linehaul", "fuel_surcharge", "accessorials")
+
+
+def _money_values(documents: Documents, document_type: str) -> dict[str, Decimal] | None:
+    values: dict[str, Decimal] = {}
+    for key in (*LINE_ITEM_KEYS, "total"):
+        extracted = documents.field(document_type, key)
+        parsed = parse_money(extracted.value if extracted else None)
+        if parsed is None:
+            return None
+        values[key] = parsed
+    return values
+
+
+def validate_invoice_arithmetic(documents: Documents) -> list[RuleFlag]:
+    invoice = _money_values(documents, "invoice")
+    rate = _money_values(documents, "rate_confirmation")
+    if invoice is None or rate is None:
+        return []
+
+    details: list[str] = []
+    evidence_key = "total"
+    line_sum = sum(invoice[key] for key in LINE_ITEM_KEYS)
+    if line_sum != invoice["total"]:
+        details.append(
+            f"Invoice line items sum to {format_money(line_sum)} but the invoice total is "
+            f"{format_money(invoice['total'])}."
+        )
+        evidence_key = "total"
+    for key in LINE_ITEM_KEYS:
+        if invoice[key] != rate[key]:
+            details.append(
+                f"Invoice {key.replace('_', ' ')} {format_money(invoice[key])} differs from "
+                f"the rate confirmation {format_money(rate[key])}."
+            )
+    if invoice["total"] != rate["total"]:
+        details.append(
+            f"Invoice total {format_money(invoice['total'])} differs from the rate "
+            f"confirmation total {format_money(rate['total'])}."
+        )
+        evidence_key = "total"
+    if not details:
+        return []
+
+    evidence_value = documents.field("invoice", evidence_key)
+    if evidence_value is None:
+        evidence_value = documents.field("invoice", "linehaul")
+    assert evidence_value is not None
+    return [
+        make_flag(
+            "invoice_arithmetic_mismatch",
+            rule_id="invoice.arithmetic",
+            details=" ".join(details),
+            evidence=evidence_for(evidence_value, "invoice"),
+        )
+    ]
+
+
+def validate_pod(documents: Documents) -> list[RuleFlag]:
+    pod = documents.get("proof_of_delivery")
+    if pod is None:
+        return []
+
+    details: list[str] = []
+    evidence: Evidence | None = None
+    rule_id = "pod.contents"
+
+    signature = documents.field("proof_of_delivery", "signed_by")
+    if signature is None or not signature.value.strip():
+        details.append("The proof of delivery has no signature.")
+        evidence = (
+            evidence_for(signature, "proof_of_delivery")
+            if signature is not None
+            else Evidence(
+                document_id=pod.classification.document_id,
+                document_type="proof_of_delivery",
+                missing_field="signed_by",
+            )
+        )
+        rule_id = "pod.signature"
+
+    pod_weight_value = documents.field("proof_of_delivery", "weight_lbs")
+    pod_weight = parse_weight(pod_weight_value.value if pod_weight_value else None)
+    bol_weight_value = documents.field("bill_of_lading", "weight_lbs")
+    bol_weight = parse_weight(bol_weight_value.value if bol_weight_value else None)
+    if bol_weight is None:
+        rate_weight_value = documents.field("rate_confirmation", "weight_lbs")
+        bol_weight = parse_weight(rate_weight_value.value if rate_weight_value else None)
+    if (
+        pod_weight_value is not None
+        and pod_weight is not None
+        and bol_weight is not None
+        and pod_weight != bol_weight
+    ):
+        details.append(
+            f"POD weight {pod_weight:,} lbs differs from the BOL weight {bol_weight:,} lbs."
+        )
+        evidence = evidence_for(pod_weight_value, "proof_of_delivery")
+        rule_id = "pod.weight"
+
+    delivered_value = documents.field("proof_of_delivery", "delivered_on")
+    delivered_on = parse_date(delivered_value.value if delivered_value else None)
+    expected_value = documents.field("rate_confirmation", "delivery_date")
+    expected_on = parse_date(expected_value.value if expected_value else None)
+    if (
+        delivered_value is not None
+        and delivered_on is not None
+        and expected_on is not None
+        and delivered_on != expected_on
+    ):
+        details.append(
+            f"POD delivery date {delivered_on.isoformat()} differs from the rate confirmation "
+            f"delivery date {expected_on.isoformat()}."
+        )
+        if evidence is None:
+            evidence = evidence_for(delivered_value, "proof_of_delivery")
+            rule_id = "pod.delivery_date"
+
+    if not details or evidence is None:
+        return []
+    return [
+        make_flag(
+            "pod_mismatch",
+            rule_id=rule_id,
+            details=" ".join(details),
+            evidence=evidence,
+        )
+    ]
 
 
 def validate_insurance(documents: Documents, as_of: date) -> list[RuleFlag]:
@@ -350,8 +541,11 @@ __all__ = [
     "find_missing_documents",
     "validate_authority",
     "validate_bank",
+    "validate_duplicates",
     "validate_identity",
     "validate_insurance",
+    "validate_invoice_arithmetic",
+    "validate_pod",
     "validate_required_documents",
     "validate_watchlist",
 ]

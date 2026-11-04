@@ -15,8 +15,11 @@ from .validators import (
     find_missing_documents,
     validate_authority,
     validate_bank,
+    validate_duplicates,
     validate_identity,
     validate_insurance,
+    validate_invoice_arithmetic,
+    validate_pod,
     validate_required_documents,
     validate_watchlist,
 )
@@ -44,6 +47,9 @@ def validate(extraction: CaseExtraction, packet: CasePacket) -> list[RuleFlag]:
         *validate_identity(documents),
         *validate_insurance(documents, as_of),
         *validate_bank(documents, as_of),
+        *validate_duplicates(documents, packet),
+        *validate_invoice_arithmetic(documents),
+        *validate_pod(documents),
         *validate_required_documents(extraction, packet),
     ]
     return sort_flags(flags)

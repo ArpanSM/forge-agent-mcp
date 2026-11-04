@@ -23,6 +23,14 @@ def condition_for(flag: RuleFlag) -> str | None:
         return "Verify the new bank account with a dated bank letter."
     if flag.rule_id == "bank.account_name":
         return "Resolve the bank account-name mismatch."
+    if flag.rule_id == "invoice.arithmetic":
+        return "Reconcile the invoice to the rate confirmation."
+    if flag.rule_id == "pod.weight":
+        return "Obtain a POD matching the BOL weight."
+    if flag.rule_id == "pod.delivery_date":
+        return "Obtain a POD matching the BOL delivery date."
+    if flag.rule_id == "pod.signature":
+        return "Obtain a signed proof of delivery."
     if flag.rule_id == "documents.required":
         return _missing_document_condition(flag)
     return None
