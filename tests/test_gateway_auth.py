@@ -13,10 +13,7 @@ from forge_agent_mcp.gateway.auth import (
     access_token_tenant,
     build_verifier,
 )
-
-ISSUER = "http://127.0.0.1:8765"
-AUDIENCE = "forge-freight-gateway"
-SECRET = "gateway-test-secret-at-least-32-bytes-long"
+from tests.conftest import AUDIENCE, ISSUER, SECRET
 
 
 def _issuer(**kwargs) -> LocalTokenIssuer:

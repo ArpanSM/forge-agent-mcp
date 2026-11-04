@@ -4,6 +4,8 @@ import shutil
 import socket
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,36 @@ AUDIENCE = "forge-freight-gateway"
 SECRET = "gateway-http-test-secret-at-least-32-bytes"
 TENANT = "tenant_northwind"
 OTHER_TENANT = "tenant_other"
+
+EXPECTED_TOOLS = [
+    "read_case",
+    "get_document",
+    "get_policy",
+    "check_duplicate",
+    "record_extraction",
+    "record_recommendation",
+    "create_decision",
+    "get_audit",
+]
+READ_TOOLS = {"read_case", "get_document", "get_policy", "check_duplicate", "get_audit"}
+WRITE_TOOLS = {"record_extraction", "record_recommendation", "create_decision"}
+
+INVOICE_ONLY_FLAGS = {
+    "duplicate_invoice",
+    "invoice_arithmetic_mismatch",
+    "pod_mismatch",
+    "round_dollar_invoice",
+}
+ONBOARDING_ONLY_FLAGS = {
+    "watchlist_hit",
+    "authority_inactive",
+    "identity_mismatch",
+    "insurance_expired",
+    "insurance_below_minimum",
+    "bank_account_changed",
+    "bank_account_name_mismatch",
+    "authority_young",
+}
 
 
 @pytest.fixture(scope="session")
@@ -100,9 +132,9 @@ class RunningGateway:
         )
 
 
-@pytest.fixture
-def gateway(seeded_db: Path) -> RunningGateway:
-    store = GatewayStore(seeded_db)
+@contextmanager
+def running_gateway(db_path: Path) -> Iterator[RunningGateway]:
+    store = GatewayStore(db_path)
     issuer = LocalTokenIssuer(secret=SECRET, issuer=ISSUER, audience=AUDIENCE)
     gateway_server = create_gateway(store, issuer)
     port = _free_port()
@@ -120,6 +152,7 @@ def gateway(seeded_db: Path) -> RunningGateway:
             break
         time.sleep(0.025)
     if not server.started:
+        store.close()
         raise RuntimeError("gateway did not start")
     running = RunningGateway(
         url=f"http://127.0.0.1:{port}/mcp",
@@ -132,3 +165,31 @@ def gateway(seeded_db: Path) -> RunningGateway:
         server.should_exit = True
         thread.join(timeout=5)
         store.close()
+
+
+@pytest.fixture
+def gateway(seeded_db: Path) -> Iterator[RunningGateway]:
+    with running_gateway(seeded_db) as running:
+        yield running
+
+
+@pytest.fixture
+def multi_tenant_gateway(tmp_path: Path) -> Iterator[RunningGateway]:
+    """Two tenants with one case unique to each; the shared corpus case ids repeat."""
+
+    manifest = load_manifest(MANIFEST_PATH)
+    path = tmp_path / "gateway.db"
+    store = GatewayStore(path)
+    store.initialize()
+    northwind_cases = {
+        case.case_id for case in manifest.cases if case.case_id != "case_onb_meridian"
+    }
+    store.seed_demo(manifest, tenant_id=TENANT, case_ids=northwind_cases)
+    store.seed_demo(
+        manifest,
+        tenant_id=OTHER_TENANT,
+        case_ids={"case_onb_meridian"},
+    )
+    store.close()
+    with running_gateway(path) as running:
+        yield running

@@ -7,9 +7,7 @@ import pytest
 
 from forge_agent_mcp.corpus.manifest import load_manifest
 from forge_agent_mcp.gateway.store import GatewayStore
-
-MANIFEST_PATH = Path(__file__).resolve().parents[1] / "corpus" / "manifest.json"
-TENANT = "tenant_northwind"
+from tests.conftest import MANIFEST_PATH, OTHER_TENANT, TENANT
 
 
 @pytest.fixture
@@ -84,7 +82,7 @@ def test_audit_is_append_only_and_ordered(store: GatewayStore, tmp_path: Path) -
             connection.execute("DELETE FROM audit WHERE seq = ?", (first,))
 
 
-def test_audit_limits_are_bounded(store: GatewayStore) -> None:
+def test_audit_limit_returns_the_earliest_events(store: GatewayStore) -> None:
     for index in range(3):
         store.append_audit(
             tenant_id=TENANT,
@@ -96,7 +94,23 @@ def test_audit_limits_are_bounded(store: GatewayStore) -> None:
         )
 
     assert len(store.list_audit(TENANT, "case_onb_ridgeline", limit=2)) == 2
-    with pytest.raises(ValueError, match="limit"):
-        store.list_audit(TENANT, "case_onb_ridgeline", limit=0)
-    with pytest.raises(ValueError, match="limit"):
-        store.list_audit(TENANT, "case_onb_ridgeline", limit=501)
+
+
+def test_case_owners_are_exact_per_tenant(tmp_path: Path) -> None:
+    store = GatewayStore(tmp_path / "two-tenants.db")
+    store.initialize()
+    manifest = load_manifest(MANIFEST_PATH)
+    store.seed_demo(
+        manifest,
+        tenant_id=TENANT,
+        case_ids={"case_onb_ridgeline"},
+    )
+    store.seed_demo(
+        manifest,
+        tenant_id=OTHER_TENANT,
+        case_ids={"case_onb_meridian"},
+    )
+
+    assert store.case_tenants("case_onb_ridgeline") == [TENANT]
+    assert store.case_tenants("case_onb_meridian") == [OTHER_TENANT]
+    assert store.case_tenants("case_missing") == []

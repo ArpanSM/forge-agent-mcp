@@ -8,25 +8,18 @@ from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
 from forge_agent_mcp.gateway.store import GatewayStore
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MANIFEST_PATH = PROJECT_ROOT / "corpus" / "manifest.json"
-
-EXPECTED_TOOLS = [
-    "read_case",
-    "get_document",
-    "get_policy",
-    "check_duplicate",
-    "record_extraction",
-    "record_recommendation",
-    "create_decision",
-    "get_audit",
-]
+from tests.conftest import EXPECTED_TOOLS, MANIFEST_PATH, TENANT
 
 
 def test_stdio_serves_the_same_tools_without_auth_and_warns(
     seeded_db: Path, tmp_path: Path
 ) -> None:
+    """Run the stdio transport as a subprocess.
+
+    stdio has no HTTP surface and FastMCP marks it trusted, so a real subprocess
+    is the only way to prove that the same gateway skips auth and scopes there.
+    """
+
     log_file = tmp_path / "stdio-stderr.log"
     transport = StdioTransport(
         sys.executable,
@@ -71,7 +64,7 @@ def test_stdio_serves_the_same_tools_without_auth_and_warns(
 
     store = GatewayStore(seeded_db)
     try:
-        events = store.list_audit("tenant_northwind", "case_onb_ridgeline")
+        events = store.list_audit(TENANT, "case_onb_ridgeline")
     finally:
         store.close()
     assert any(event.principal == "stdio-local" for event in events)
