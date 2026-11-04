@@ -1,0 +1,47 @@
+{% set documents = detail.view.documents %}
+{% set extraction = detail.result.extraction if detail.result else None %}
+{% if extraction and extraction.missing_documents %}
+<div class="error-banner" style="margin-bottom:10px">
+  <strong>Missing required documents</strong>
+  {{ extraction.missing_documents | join(', ') | replace('_', ' ') }}. The rule engine requests documents rather than approving.
+</div>
+{% endif %}
+{% if documents %}
+<div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Document</th>
+        <th>Type</th>
+        <th>Pages</th>
+        <th>Status</th>
+        <th>Content hash</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for document in documents %}
+      <tr>
+        <td>
+          <div class="stack">
+            <strong>{{ document.title }}</strong>
+            <span class="mono-small">{{ document.document_id }}</span>
+          </div>
+        </td>
+        <td><span class="pill">{{ document.document_type | replace('_', ' ') }}</span></td>
+        <td class="mono" style="text-align:center">{{ document.pages }}</td>
+        <td>
+          {% if document.status == 'extracted' %}
+          <span class="pill ok">Extracted</span>
+          {% else %}
+          <span class="pill pending">Pending</span>
+          {% endif %}
+        </td>
+        <td><span class="mono-small">{{ document.content_hash | short(14) }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">No documents were returned for this case.</p>
+{% endif %}

@@ -1,0 +1,44 @@
+{% if flags %}
+  {% for severity in ['hard_stop', 'high', 'medium', 'low'] %}
+    {% set group = flags | selectattr('severity', 'equalto', severity) | list %}
+    {% if group %}
+    <div class="flag-group tone-{{ severity }}">
+      <div class="flag-group-head">
+        <span class="sev-dot"></span>
+        <h3>{{ severity | replace('_', ' ') | capitalize }}</h3>
+        <span class="group-count">{{ group | length }}</span>
+      </div>
+      {% for flag in group %}
+      <div class="flag-item">
+        <div>
+          <div class="flag-title-row">
+            <span class="rule-chip">{{ flag.code }}</span>
+            <p class="flag-title">{{ flag.code | replace('_', ' ') | capitalize }}</p>
+          </div>
+          <p class="flag-evidence">{{ flag.details }}</p>
+          <div class="flag-trigger">{{ flag.rule_id }} · {{ flag.rule }}</div>
+        </div>
+        <div class="flag-source">
+          {% if flag.evidence.document_id %}
+          <span class="src-doc">{{ flag.evidence.document_id }}</span>
+          {% elif flag.evidence.record_path %}
+          <span class="src-doc">{{ flag.evidence.record_path }}</span>
+          {% elif flag.evidence.record_id %}
+          <span class="src-doc">{{ flag.evidence.record_id }}</span>
+          {% else %}
+          <span class="src-doc">Case evidence</span>
+          {% endif %}
+          {% if flag.evidence.page %}<code>page {{ flag.evidence.page }}</code>{% endif %}
+          {% if flag.evidence.bbox %}<code>bbox {{ flag.evidence.bbox | join(', ') }}</code>{% endif %}
+          {% if flag.evidence.quote %}
+          <code style="color:var(--ink-2);margin-top:2px">“{{ flag.evidence.quote }}”</code>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endfor %}
+{% else %}
+  <p class="empty">No rule flags were found for this packet. A clean result still needs a human decision.</p>
+{% endif %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="error-card">
+  <div class="eyebrow"><span class="eyebrow-dot" style="background:var(--hard)"></span> Review console</div>
+  <h1>Case not found</h1>
+  <p>{{ error }}</p>
+  {% if case_id %}<p class="mono small">{{ case_id }}</p>{% endif %}
+  <p><a class="btn" href="/">Back to the review queue</a></p>
+</div>
+{% endblock %}

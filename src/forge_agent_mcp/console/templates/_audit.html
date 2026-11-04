@@ -1,0 +1,36 @@
+{% if detail.audit %}
+<div class="table-scroll">
+  <table class="audit-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Time</th>
+        <th>Tool</th>
+        <th>Event</th>
+        <th>Outcome</th>
+        <th>Principal</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in detail.audit %}
+      <tr>
+        <td class="audit-time">{{ event.event_id }}</td>
+        <td class="audit-time">{{ event.created_at | human_time }}</td>
+        <td class="audit-tool">{{ event.tool }}</td>
+        <td class="audit-event">{{ event.event }}</td>
+        <td><span class="audit-outcome {{ event.outcome }}">{{ event.outcome }}</span></td>
+        <td class="audit-actor">{{ event.principal }}</td>
+        <td class="audit-detail">
+          {% for key, value in event.detail.items() %}
+            {{ key }}={{ value }}{% if not loop.last %}<br>{% endif %}
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">No audit events yet. Run the case to see gateway reads and writes.</p>
+{% endif %}

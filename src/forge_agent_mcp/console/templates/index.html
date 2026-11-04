@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow"><span class="eyebrow-dot"></span> Underwriting operations · 05 Nov 2026</div>
+    <h1>Underwriting review console</h1>
+    <p class="case-sub">Two synthetic case types, one evidence path, one human approval. The queue is read from the gateway; the pending decision is read from the agent's checkpoint.</p>
+  </div>
+  <span class="synth-badge">SYNTHETIC CORPUS · NO REAL PII</span>
+</div>
+
+<div class="side-grid">
+  <section id="queue-panel" class="queue-panel"
+           hx-get="/" hx-trigger="every 20s" hx-select="#queue-panel" hx-target="#queue-panel" hx-swap="outerHTML">
+    <div class="card-head" style="padding-bottom:11px">
+      <div>
+        <h2>Review queue</h2>
+        <p class="card-sub">{{ queue | length }} cases in the local demo tenant</p>
+      </div>
+      <span class="count-pill">{{ queue | selectattr('pending_approval') | list | length }} pending approval</span>
+    </div>
+    {% for case_type, label in [('onboarding', 'Carrier Onboarding'), ('invoice', 'Invoice Funding')] %}
+      {% set group = queue | selectattr('case_type', 'equalto', case_type) | list %}
+      <div class="divider" style="margin:0"></div>
+      <div class="card-body" style="padding-top:12px">
+        <div class="queue-kind" style="margin-bottom:6px">{{ label }}</div>
+        {% if group %}
+        <div class="table-scroll">
+          <table class="queue-table">
+            <thead>
+              <tr>
+                <th>Carrier</th>
+                <th>Case</th>
+                <th>Status</th>
+                <th>Signal</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in group %}
+              {% set tone = 'tone-pending' %}
+              {% if item.status == 'approved' %}{% set tone = 'tone-ok' %}
+              {% elif item.status == 'declined' %}{% set tone = 'tone-hard' %}
+              {% elif item.status == 'awaiting_documents' %}{% set tone = 'tone-high' %}
+              {% elif item.status == 'extracting' %}{% set tone = 'tone-medium' %}
+              {% endif %}
+              <tr>
+                <td>
+                  <div class="queue-carrier">{{ item.carrier_name }}</div>
+                  <div class="queue-id">{{ item.case_id }}</div>
+                </td>
+                <td><span class="queue-kind">{{ item.case_type | capitalize }}</span></td>
+                <td>
+                  <span class="status-pill {{ tone }}"><i></i>{{ item.status_label }}</span>
+                  {% if item.recommendation %}
+                  <div class="queue-id">Rec: {{ item.recommendation | recommendation_label }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if item.flag_count %}
+                  <div class="flag-mini">
+                    {% for severity in ['hard_stop', 'high', 'medium', 'low'] %}
+                      {% if item.flags.get(severity, 0) %}
+                      <span class="mini tone-{{ severity }}">{{ item.flags[severity] }} {{ severity | replace('_', ' ') }}</span>
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                  {% else %}
+                  <span class="faint small">No flags</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div class="queue-actions">
+                    {% if item.status == 'unavailable' %}
+                    <span class="faint small">Not seeded</span>
+                    {% else %}
+                    <a class="btn small" href="/cases/{{ item.case_id }}">Open</a>
+                    {% if item.pending_approval %}
+                    <a class="btn small primary" href="/cases/{{ item.case_id }}#decision">Review</a>
+                    {% elif not item.decision %}
+                    <form method="post" action="/cases/{{ item.case_id }}/run" style="margin:0">
+                      <button class="btn small primary" type="submit">Run case</button>
+                    </form>
+                    {% endif %}
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="empty">No {{ label | lower }} cases in the local catalog.</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </section>
+
+  <aside>
+    <div class="side-card">
+      <div class="side-title"><svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg> Demo walkthrough</div>
+      <ol class="walkthrough">
+        <li>Open a case and press <strong>Run case</strong> to start the LangGraph run.</li>
+        <li>Read the documents, cited fields, flags and recommendation.</li>
+        <li>Approve, conditionally approve, decline or request documents in the decision panel.</li>
+        <li>The console mints the approval token, resumes the graph and shows the committed decision and audit chain.</li>
+      </ol>
+      <p class="note-hint" style="margin-top:8px">The clean onboarding case recommends <strong>approve</strong>. The Northgate invoice recommends <strong>request documents</strong>. Cedar Pine is a hard stop: only decline or request documents are available.</p>
+    </div>
+
+    <div class="side-card">
+      <div class="side-title"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Decision rules</div>
+      <ul class="side-list">
+        <li>Any hard stop → decline or request documents; never approve.</li>
+        <li>Two or more high flags → hold; missing documents always request documents.</li>
+        <li>One high flag or a medium flag → conditional approve.</li>
+        <li>The deterministic rule engine owns severity. The model may explain, not override.</li>
+      </ul>
+    </div>
+
+    <div class="side-card">
+      <div class="side-title">Severity legend</div>
+      <div class="side-list">
+        <li><span class="mini tone-hard">hard stop</span></li>
+        <li><span class="mini tone-high">high</span></li>
+        <li><span class="mini tone-medium">medium</span></li>
+        <li><span class="mini tone-low">low</span></li>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endblock %}
