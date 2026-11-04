@@ -8,6 +8,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
 
 # Node
 node_modules/
@@ -15,7 +19,8 @@ node_modules/
 dist/
 build/
 
-# Local data
+# Generated corpus and local data
+data/corpus/
 data/raw/
 data/private/
 

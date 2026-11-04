@@ -2,10 +2,28 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** spec published; implementation starting.
+**Status:** implementation started — scaffold, model-provider abstraction and synthetic corpus generator.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - [Domain glossary](CONTEXT.md)
+- [Agent guide](AGENTS.md)
+- [Architecture decisions](docs/adr/)
+
+## Repository commands
+
+```bash
+make install   # editable install with dev dependencies
+make corpus    # regenerate the synthetic corpus into data/corpus/
+make test      # offline pytest suite
+make lint      # ruff
+```
+
+If the system Python is externally managed, pass the flags your environment needs, for
+example `make install PIP_FLAGS="--user --break-system-packages"`.
+
+The corpus manifest at [`corpus/manifest.json`](corpus/manifest.json) is the source of
+truth for the 8 carriers, 16 cases, document types, archetypes and the 12 + 4 eval/held-out
+split. Generated PDFs and ground truth are written to `data/corpus/` and are gitignored.
 
 ## The problem
 
