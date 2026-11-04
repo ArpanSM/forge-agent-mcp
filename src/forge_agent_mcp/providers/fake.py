@@ -6,9 +6,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from .base import ChatMessage, Completion, ProviderError, StructuredModel
+from .base import ChatMessage, Completion, ProviderError, ProviderSchemaError, StructuredModel
 
 
 @dataclass(frozen=True)
@@ -93,5 +93,10 @@ class FakeProvider:
         if isinstance(value, BaseModel):
             if isinstance(value, schema):
                 return value
-            return schema.model_validate(value.model_dump())
-        return schema.model_validate(value)
+            value = value.model_dump()
+        try:
+            return schema.model_validate(value)
+        except ValidationError as exc:
+            raise ProviderSchemaError(
+                f"FakeProvider structured response did not match {schema.__name__}"
+            ) from exc

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from forge_agent_mcp.config import Settings
 from forge_agent_mcp.providers import (
@@ -81,7 +81,7 @@ def test_fake_provider_rejects_structured_value_that_does_not_match_schema() -> 
     provider = FakeProvider()
     provider.queue_structured({"legal_name": "Missing EIN"})
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ProviderSchemaError, match="did not match"):
         provider.complete_structured([ChatMessage(role="user", content="extract")], ExtractResult)
 
 
