@@ -56,6 +56,18 @@ HARD_STOP_ARCHETYPE_FLAGS: dict[str, set[str]] = {
     "duplicate_invoice": {"duplicate_invoice"},
 }
 
+ARCHETYPE_FLAGS: dict[str, set[str]] = {
+    **HARD_STOP_ARCHETYPE_FLAGS,
+    "clean": set(),
+    "bank_change": {"bank_account_changed", "bank_account_name_mismatch"},
+    "invoice_arithmetic_pod_mismatch": {
+        "invoice_arithmetic_mismatch",
+        "pod_mismatch",
+    },
+    "missing_document": {"missing_document"},
+    "prompt_injection": {"document_instruction_injection"},
+}
+
 
 class ManifestError(ValueError):
     """The manifest is missing, malformed or inconsistent."""
@@ -392,7 +404,7 @@ def _validate_documents(case: Case, manifest: Manifest, errors: list[str]) -> No
         )
     if extra:
         errors.append(f"case {case.case_id}: unknown documents {sorted(extra)}")
-    if missing and not missing <= allowed_missing:
+    if "proof_of_delivery" in missing and "proof_of_delivery" not in allowed_missing:
         errors.append(
             f"case {case.case_id}: proof_of_delivery is missing without a missing_document label"
         )
@@ -481,6 +493,12 @@ def validate_manifest(raw: dict[str, Any]) -> Manifest:
         for code in case.expected_flags:
             if code not in flag_codes:
                 errors.append(f"case {case.case_id}: unknown flag code {code!r}")
+        for archetype in case.archetypes:
+            expected_codes = ARCHETYPE_FLAGS.get(archetype)
+            if expected_codes is None:
+                errors.append(f"case {case.case_id}: unknown archetype {archetype!r}")
+            elif expected_codes and not set(case.expected_flags) & expected_codes:
+                errors.append(f"case {case.case_id}: archetype {archetype!r} has no matching flag")
 
         _validate_documents(case, manifest, errors)
 

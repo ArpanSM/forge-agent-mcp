@@ -132,6 +132,17 @@ def test_validator_rejects_a_missing_invoice_document_without_a_missing_document
         validate_manifest(raw)
 
 
+def test_validator_rejects_an_archetype_without_its_flag() -> None:
+    raw = _raw_manifest()
+    case = _case(raw, "case_onb_northgate")
+    case["expected_flags"] = []
+    case["expected_recommendation"] = "hold"
+    case["expected_conditions"] = ["Review the packet manually."]
+
+    with pytest.raises(ManifestError, match="prompt_injection.*no matching flag"):
+        validate_manifest(raw)
+
+
 def test_validator_rejects_an_unknown_carrier_reference() -> None:
     raw = _raw_manifest()
     _case(raw, "case_onb_ridgeline")["carrier_id"] = "car_does_not_exist"
