@@ -6,6 +6,8 @@ used only as an oracle for the assertion; it is never passed into the rule engin
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from forge_agent_mcp.corpus.manifest import load_manifest
@@ -13,7 +15,7 @@ from forge_agent_mcp.extraction.extractor import extract_case
 from forge_agent_mcp.rules.corpus import load_case_packet
 from forge_agent_mcp.rules.engine import review
 
-MANIFEST_PATH = "corpus/manifest.json"
+MANIFEST_PATH = Path(__file__).resolve().parents[1] / "corpus" / "manifest.json"
 
 CASES = [case.case_id for case in load_manifest(MANIFEST_PATH).cases]
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from forge_agent_mcp.corpus.manifest import load_manifest
 from forge_agent_mcp.rules.catalog import DOCUMENT_TITLES, FLAG_CATALOG
 
-MANIFEST_PATH = "corpus/manifest.json"
+MANIFEST_PATH = Path(__file__).resolve().parents[1] / "corpus" / "manifest.json"
 
 
 def test_flag_catalogue_matches_the_manifest() -> None:

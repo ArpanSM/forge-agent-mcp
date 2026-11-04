@@ -18,18 +18,15 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 @dataclass(frozen=True)
 class Documents:
     by_type: dict[str, DocumentExtraction]
-    by_id: dict[str, DocumentExtraction]
 
     @classmethod
     def from_extraction(cls, extraction: CaseExtraction) -> Documents:
         by_type: dict[str, DocumentExtraction] = {}
-        by_id: dict[str, DocumentExtraction] = {}
         for document in extraction.documents:
-            by_id[document.classification.document_id] = document
             document_type = document.classification.document_type
             if document_type != "unknown" and document_type not in by_type:
                 by_type[document_type] = document
-        return cls(by_type=by_type, by_id=by_id)
+        return cls(by_type=by_type)
 
     def get(self, document_type: str) -> DocumentExtraction | None:
         return self.by_type.get(document_type)
@@ -53,18 +50,6 @@ def evidence_for(value: ExtractedValue, document_type: str) -> Evidence:
         page=citation.page,
         bbox=citation.bbox,
         quote=citation.quote,
-    )
-
-
-def missing_field_evidence(
-    document_type: str,
-    field: str,
-    document: DocumentExtraction | None,
-) -> Evidence:
-    return Evidence(
-        document_id=document.classification.document_id if document else None,
-        document_type=document_type,
-        missing_field=field,
     )
 
 
@@ -116,7 +101,6 @@ __all__ = [
     "Documents",
     "evidence_for",
     "format_money",
-    "missing_field_evidence",
     "normalize_identifier",
     "normalize_name",
     "parse_date",
