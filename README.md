@@ -2,7 +2,7 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, and the MCP gateway with auth, tenant isolation and audit. Agent, console and evals next.
+**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, and the MCP gateway with auth, tenant isolation and audit. Agent, console and evals next.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - [Gateway guide](docs/gateway.md)
