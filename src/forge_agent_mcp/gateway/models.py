@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..corpus.vocab import CaseType, Decision, Recommendation, Severity
 
-CASE_STATUSES = Literal[
+CaseStatus = Literal[
     "pending_review",
     "extracting",
     "pending_approval",
@@ -16,6 +16,7 @@ CASE_STATUSES = Literal[
     "approved",
     "declined",
 ]
+DocumentStatus = Literal["pending", "extracted"]
 AuditEventType = Literal["read", "write", "write_denied", "read_denied", "auth_denied"]
 AuditOutcome = Literal["ok", "denied", "error"]
 
@@ -42,6 +43,12 @@ class CitationView(StrictModel):
     page: int | None = Field(default=None, ge=1)
     bbox: list[float] | None = Field(default=None, min_length=4, max_length=4)
     record_path: str | None = None
+
+    @model_validator(mode="after")
+    def _require_locator(self) -> CitationView:
+        if not self.document_id and not self.record_path:
+            raise ValueError("citation must include a document_id or record_path")
+        return self
 
 
 class ExtractedField(StrictModel):
@@ -75,7 +82,7 @@ class DocumentRecord(StrictModel):
     text: str
     page_text: list[DocumentPage]
     bboxes: list[DocumentBBox]
-    status: str
+    status: DocumentStatus
 
 
 class CaseRecord(StrictModel):
@@ -83,7 +90,7 @@ class CaseRecord(StrictModel):
     case_id: str
     case_type: CaseType
     carrier: CarrierView
-    status: str
+    status: CaseStatus
     summary: str
     invoice_number: str | None = None
     invoice_content_hash: str | None = None
@@ -99,10 +106,10 @@ class StoredRecord(StrictModel):
 
 
 class FlagRecord(StrictModel):
-    code: str
+    code: str = Field(min_length=1)
     severity: Severity
-    rule: str
-    details: str
+    rule: str = Field(min_length=1)
+    details: str = Field(min_length=1)
     evidence: CitationView
 
 
@@ -134,6 +141,28 @@ class DecisionRecord(StrictModel):
     conditions: list[str]
     approver: str | None = None
     principal: str | None = None
+    created_at: str
+
+
+class ApprovalRecord(StrictModel):
+    tenant_id: str
+    approval_id: str
+    case_id: str
+    jti: str
+    approver: str
+    payload_hash: str
+    expires_at: str
+    used_at: str | None = None
+    created_at: str
+
+
+class IdempotencyRecord(StrictModel):
+    tenant_id: str
+    principal: str
+    tool: str
+    key: str
+    args_hash: str
+    result: dict[str, Any]
     created_at: str
 
 
@@ -201,14 +230,14 @@ class CaseDocumentView(StrictModel):
     title: str
     pages: int = Field(ge=1)
     content_hash: str
-    status: str
+    status: DocumentStatus
 
 
 class CaseView(StrictModel):
     tenant_id: str
     case_id: str
     case_type: CaseType
-    status: str
+    status: CaseStatus
     carrier: CarrierView
     summary: str
     documents: list[CaseDocumentView]
@@ -280,7 +309,7 @@ class RecordExtractionInput(StrictModel):
 class RecordRecommendationInput(StrictModel):
     case_id: str = Field(min_length=1)
     recommendation: Recommendation
-    rationale: str
+    rationale: str = Field(min_length=1)
     conditions: list[str] = Field(default_factory=list)
     flags: list[FlagRecord] = Field(default_factory=list)
 
@@ -288,7 +317,7 @@ class RecordRecommendationInput(StrictModel):
 class CreateDecisionInput(StrictModel):
     case_id: str = Field(min_length=1)
     decision: Decision
-    rationale: str
+    rationale: str = Field(min_length=1)
     conditions: list[str] = Field(default_factory=list)
     approval_token: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)

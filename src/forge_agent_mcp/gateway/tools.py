@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -14,6 +15,7 @@ from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from ..corpus.pdf import PAGE_HEIGHT, PAGE_WIDTH
 from ..corpus.vocab import Decision, Recommendation
 from .auth import (
     APPROVE_SCOPE,
@@ -23,6 +25,7 @@ from .auth import (
     access_token_tenant,
 )
 from .models import (
+    AuditEventType,
     AuditView,
     CaseDocumentView,
     CaseRecord,
@@ -30,6 +33,7 @@ from .models import (
     CheckDuplicateInput,
     CreateDecisionInput,
     DecisionRecord,
+    DocumentRecord,
     DocumentView,
     DuplicateMatch,
     DuplicateView,
@@ -114,47 +118,76 @@ def _request_context() -> RequestContext:
 class CaseAccess:
     case: CaseRecord | None
     tenant_id: str
+    audit_tenant: str
     error_code: str | None = None
     message: str | None = None
 
 
 def _access_case(store: GatewayStore, context: RequestContext, case_id: str) -> CaseAccess:
-    tenant_id = context.tenant_id or store.case_tenant(case_id) or "unknown"
+    audit_tenant = context.tenant_id or "system"
     if context.authenticated and context.tenant_id is None:
         return CaseAccess(
             case=None,
-            tenant_id=tenant_id,
+            tenant_id="unknown",
+            audit_tenant=audit_tenant,
             error_code="tenant_mismatch",
             message="The access token has no tenant claim.",
         )
-    case = store.get_case(tenant_id, case_id)
-    if case is None:
-        actual_tenant = store.case_tenant(case_id)
-        if (
-            actual_tenant is not None
-            and context.tenant_id is not None
-            and actual_tenant != context.tenant_id
-        ):
+
+    owners = store.case_tenants(case_id)
+    if context.tenant_id is None:
+        if not owners:
             return CaseAccess(
                 case=None,
-                tenant_id=actual_tenant,
-                error_code="tenant_mismatch",
-                message="The authenticated tenant does not own this case.",
+                tenant_id="unknown",
+                audit_tenant=audit_tenant,
+                error_code="case_not_found",
+                message=f"Case {case_id!r} does not exist for this tenant.",
             )
+        if len(owners) > 1:
+            return CaseAccess(
+                case=None,
+                tenant_id="unknown",
+                audit_tenant=audit_tenant,
+                error_code="tenant_ambiguous",
+                message=(
+                    "This case id exists in more than one tenant; use HTTP with a tenant token."
+                ),
+            )
+        tenant_id = owners[0]
+    elif context.tenant_id in owners:
+        tenant_id = context.tenant_id
+    elif owners:
         return CaseAccess(
             case=None,
-            tenant_id=tenant_id,
-            error_code="case_not_found",
-            message=f"Case {case_id!r} does not exist for this tenant.",
-        )
-    if context.tenant_id is not None and case.tenant_id != context.tenant_id:
-        return CaseAccess(
-            case=None,
-            tenant_id=case.tenant_id,
+            tenant_id=owners[0],
+            audit_tenant=context.tenant_id,
             error_code="tenant_mismatch",
             message="The authenticated tenant does not own this case.",
         )
-    return CaseAccess(case=case, tenant_id=case.tenant_id)
+    else:
+        return CaseAccess(
+            case=None,
+            tenant_id=context.tenant_id,
+            audit_tenant=context.tenant_id,
+            error_code="case_not_found",
+            message=f"Case {case_id!r} does not exist for this tenant.",
+        )
+
+    case = store.get_case(tenant_id, case_id)
+    if case is None:
+        return CaseAccess(
+            case=None,
+            tenant_id=tenant_id,
+            audit_tenant=audit_tenant,
+            error_code="case_not_found",
+            message=f"Case {case_id!r} does not exist for this tenant.",
+        )
+    return CaseAccess(
+        case=case,
+        tenant_id=case.tenant_id,
+        audit_tenant=case.tenant_id,
+    )
 
 
 def _audit_failure(
@@ -163,7 +196,7 @@ def _audit_failure(
     tenant_id: str,
     case_id: str,
     tool: str,
-    event: str,
+    event: AuditEventType,
     principal: str,
     error_code: str,
     message: str,
@@ -187,7 +220,7 @@ def _audit_success(
     tenant_id: str,
     case_id: str,
     tool: str,
-    event: str,
+    event: AuditEventType,
     principal: str,
     request: Any,
     envelope: Any,
@@ -204,6 +237,28 @@ def _audit_success(
     )
 
 
+def _case_summary(
+    case: CaseRecord,
+    documents: list[CaseDocumentView],
+    extraction_count: int,
+    recommendation: RecommendationRecord | None,
+    flags: list[FlagRecord],
+) -> str:
+    case_label = case.case_type.replace("_", " ").capitalize()
+    parts = [
+        f"{case_label} case for {case.carrier.legal_name}.",
+        f"{len(documents)} documents and {extraction_count} extraction(s) recorded.",
+        f"Status: {case.status.replace('_', ' ')}.",
+    ]
+    if recommendation is not None:
+        parts.append(f"Current recommendation: {recommendation.recommendation}.")
+    if flags:
+        parts.append(
+            "Current flags: " + ", ".join(f"{flag.code} ({flag.severity})" for flag in flags) + "."
+        )
+    return " ".join(parts)
+
+
 def _case_view(store: GatewayStore, case: CaseRecord) -> CaseView:
     documents = [
         CaseDocumentView(
@@ -216,17 +271,20 @@ def _case_view(store: GatewayStore, case: CaseRecord) -> CaseView:
         )
         for document in store.list_documents(case.tenant_id, case.case_id)
     ]
+    recommendation = store.latest_recommendation(case.tenant_id, case.case_id)
+    flags = store.list_flags(case.tenant_id, case.case_id)
+    extraction_count = store.count_extractions(case.tenant_id, case.case_id)
     return CaseView(
         tenant_id=case.tenant_id,
         case_id=case.case_id,
         case_type=case.case_type,
         status=case.status,
         carrier=case.carrier,
-        summary=case.summary,
+        summary=_case_summary(case, documents, extraction_count, recommendation, flags),
         documents=documents,
-        extraction_count=store.count_extractions(case.tenant_id, case.case_id),
-        recommendation=store.latest_recommendation(case.tenant_id, case.case_id),
-        flags=store.list_flags(case.tenant_id, case.case_id),
+        extraction_count=extraction_count,
+        recommendation=recommendation,
+        flags=flags,
         decision=store.latest_decision(case.tenant_id, case.case_id),
     )
 
@@ -302,14 +360,50 @@ def _duplicate_matches(
     return matches
 
 
-def _validate_citation(field_document_id: str, field: Any) -> str | None:
+def _validate_citation(field_document_id: str, field: Any, document: DocumentRecord) -> str | None:
     citation = field.citation
     if citation.document_id != field_document_id:
         return "Citation document_id must match the extracted document."
     if citation.page is None:
         return "Citation must include a page."
+    if citation.page > document.pages:
+        return "Citation page is outside the document."
     if citation.bbox is None:
         return "Citation must include a bounding box."
+    if not _bbox_on_page(citation.bbox):
+        return "Citation bounding box is outside the page."
+    return None
+
+
+def _bbox_on_page(bbox: list[float]) -> bool:
+    if len(bbox) != 4 or not all(math.isfinite(value) for value in bbox):
+        return False
+    x1, y1, x2, y2 = bbox
+    return 0 <= x1 < x2 <= PAGE_WIDTH and 0 <= y1 < y2 <= PAGE_HEIGHT
+
+
+def _validate_evidence(
+    store: GatewayStore,
+    *,
+    tenant_id: str,
+    case_id: str,
+    flags: list[FlagRecord],
+) -> str | None:
+    for flag in flags:
+        evidence = flag.evidence
+        if evidence.document_id is None:
+            if evidence.record_path:
+                continue
+            return f"Flag {flag.code!r} needs document or record evidence."
+        document = store.get_document(tenant_id, case_id, evidence.document_id)
+        if document is None:
+            return f"Flag {flag.code!r} cites document {evidence.document_id!r} outside this case."
+        if evidence.page is None or not 1 <= evidence.page <= document.pages:
+            return (
+                f"Flag {flag.code!r} cites page {evidence.page!r} outside {evidence.document_id!r}."
+            )
+        if evidence.bbox is None or not _bbox_on_page(evidence.bbox):
+            return f"Flag {flag.code!r} has a bounding box outside the cited page."
     return None
 
 
@@ -326,14 +420,16 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         output_schema=CaseEnvelope.model_json_schema(),
         annotations=_read_annotations("Read case"),
     )
-    async def read_case(case_id: str) -> CaseEnvelope | ToolResult:
+    async def read_case(
+        case_id: Annotated[str, Field(min_length=1)],
+    ) -> CaseEnvelope | ToolResult:
         context = _request_context()
         request = ReadCaseInput(case_id=case_id)
         access = _access_case(store, context, request.case_id)
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="read_case",
                 event="read_denied",
@@ -367,14 +463,17 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         output_schema=DocumentEnvelope.model_json_schema(),
         annotations=_read_annotations("Get document"),
     )
-    async def get_document(case_id: str, document_id: str) -> DocumentEnvelope | ToolResult:
+    async def get_document(
+        case_id: Annotated[str, Field(min_length=1)],
+        document_id: Annotated[str, Field(min_length=1)],
+    ) -> DocumentEnvelope | ToolResult:
         context = _request_context()
         request = GetDocumentInput(case_id=case_id, document_id=document_id)
         access = _access_case(store, context, request.case_id)
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="get_document",
                 event="read_denied",
@@ -391,7 +490,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
             message = f"Document {request.document_id!r} is not part of this case."
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="get_document",
                 event="read_denied",
@@ -434,14 +533,16 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         output_schema=PolicyEnvelope.model_json_schema(),
         annotations=_read_annotations("Get policy"),
     )
-    async def get_policy(case_id: str) -> PolicyEnvelope | ToolResult:
+    async def get_policy(
+        case_id: Annotated[str, Field(min_length=1)],
+    ) -> PolicyEnvelope | ToolResult:
         context = _request_context()
         request = GetPolicyInput(case_id=case_id)
         access = _access_case(store, context, request.case_id)
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="get_policy",
                 event="read_denied",
@@ -457,7 +558,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         if policy is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="get_policy",
                 event="read_denied",
@@ -495,7 +596,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         annotations=_read_annotations("Check duplicate"),
     )
     async def check_duplicate(
-        case_id: str,
+        case_id: Annotated[str, Field(min_length=1)],
         invoice_number: str | None = None,
         document_hash: str | None = None,
     ) -> DuplicateEnvelope | ToolResult:
@@ -509,7 +610,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="check_duplicate",
                 event="read_denied",
@@ -563,8 +664,8 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         annotations=_write_annotations("Record extraction"),
     )
     async def record_extraction(
-        case_id: str,
-        document_id: str,
+        case_id: Annotated[str, Field(min_length=1)],
+        document_id: Annotated[str, Field(min_length=1)],
         fields: Annotated[list[ExtractedField], Field(min_length=1)],
     ) -> ExtractionEnvelope | ToolResult:
         context = _request_context()
@@ -573,7 +674,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="record_extraction",
                 event="write_denied",
@@ -590,7 +691,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
             message = f"Document {request.document_id!r} is not part of this case."
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="record_extraction",
                 event="write_denied",
@@ -601,11 +702,11 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
             )
             return _failure(ExtractionEnvelope, "document_not_found", message)
         for field in request.fields:
-            citation_error = _validate_citation(request.document_id, field)
+            citation_error = _validate_citation(request.document_id, field, document)
             if citation_error:
                 _audit_failure(
                     store,
-                    tenant_id=access.tenant_id,
+                    tenant_id=access.audit_tenant,
                     case_id=request.case_id,
                     tool="record_extraction",
                     event="write_denied",
@@ -646,9 +747,9 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         annotations=_write_annotations("Record recommendation"),
     )
     async def record_recommendation(
-        case_id: str,
+        case_id: Annotated[str, Field(min_length=1)],
         recommendation: Recommendation,
-        rationale: str,
+        rationale: Annotated[str, Field(min_length=1)],
         conditions: list[str],
         flags: list[FlagRecord],
     ) -> RecommendationEnvelope | ToolResult:
@@ -664,7 +765,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="record_recommendation",
                 event="write_denied",
@@ -678,41 +779,25 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
                 access.error_code or "case_not_found",
                 access.message or "",
             )
-        policy = store.get_policy(access.tenant_id, access.case.case_type)
-        catalog = {flag.code: flag for flag in policy.flags} if policy else {}
-        for flag in request.flags:
-            definition = catalog.get(flag.code)
-            if definition is None:
-                message = f"Unknown flag code {flag.code!r} for this case type."
-                _audit_failure(
-                    store,
-                    tenant_id=access.tenant_id,
-                    case_id=request.case_id,
-                    tool="record_recommendation",
-                    event="write_denied",
-                    principal=context.principal,
-                    error_code="invalid_flag",
-                    message=message,
-                    request=request,
-                )
-                return _failure(RecommendationEnvelope, "invalid_flag", message)
-            if flag.severity != definition.severity:
-                message = (
-                    f"Flag {flag.code!r} has severity {flag.severity!r}; "
-                    f"the policy requires {definition.severity!r}."
-                )
-                _audit_failure(
-                    store,
-                    tenant_id=access.tenant_id,
-                    case_id=request.case_id,
-                    tool="record_recommendation",
-                    event="write_denied",
-                    principal=context.principal,
-                    error_code="invalid_flag",
-                    message=message,
-                    request=request,
-                )
-                return _failure(RecommendationEnvelope, "invalid_flag", message)
+        evidence_error = _validate_evidence(
+            store,
+            tenant_id=access.tenant_id,
+            case_id=request.case_id,
+            flags=request.flags,
+        )
+        if evidence_error:
+            _audit_failure(
+                store,
+                tenant_id=access.audit_tenant,
+                case_id=request.case_id,
+                tool="record_recommendation",
+                event="write_denied",
+                principal=context.principal,
+                error_code="invalid_evidence",
+                message=evidence_error,
+                request=request,
+            )
+            return _failure(RecommendationEnvelope, "invalid_evidence", evidence_error)
         recorded = store.add_recommendation(
             tenant_id=access.tenant_id,
             case_id=request.case_id,
@@ -752,12 +837,12 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         ),
     )
     async def create_decision(
-        case_id: str,
+        case_id: Annotated[str, Field(min_length=1)],
         decision: Decision,
-        rationale: str,
+        rationale: Annotated[str, Field(min_length=1)],
         conditions: list[str],
-        approval_token: str,
-        idempotency_key: str,
+        approval_token: Annotated[str, Field(min_length=1)],
+        idempotency_key: Annotated[str, Field(min_length=1)],
     ) -> DecisionEnvelope | ToolResult:
         context = _request_context()
         request = CreateDecisionInput(
@@ -772,7 +857,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="create_decision",
                 event="write_denied",
@@ -809,7 +894,8 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         annotations=_read_annotations("Get audit"),
     )
     async def get_audit(
-        case_id: str, limit: Annotated[int, Field(ge=1, le=500)] = 100
+        case_id: Annotated[str, Field(min_length=1)],
+        limit: Annotated[int, Field(ge=1, le=500)] = 100,
     ) -> AuditEnvelope | ToolResult:
         context = _request_context()
         request = GetAuditInput(case_id=case_id, limit=limit)
@@ -817,7 +903,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         if access.case is None:
             _audit_failure(
                 store,
-                tenant_id=access.tenant_id,
+                tenant_id=access.audit_tenant,
                 case_id=request.case_id,
                 tool="get_audit",
                 event="read_denied",

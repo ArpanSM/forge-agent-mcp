@@ -82,27 +82,21 @@ class GatewayGate:
         token = raw_auth[7:] if raw_auth.lower().startswith("bearer ") else ""
         access = await self.verifier.verify_token(token) if token else None
 
-        case_tenant = self.store.case_tenant(case_id) if case_id else None
-
         if access is None:
-            if token and case_id:
-                self._deny(
-                    tenant_id=case_tenant or "unknown",
-                    case_id=case_id,
-                    tool=tool_name,
-                    principal="unknown",
-                    reason="invalid_token",
-                    detail={"required_scope": self.tool_scopes.get(tool_name)},
-                )
+            # An invalid or expired token is a 401 from FastMCP and must never
+            # create an audit row in the victim tenant named in the payload.
             return None
 
+        owners = self.store.case_tenants(case_id) if case_id else []
+        target_tenant = owners[0] if owners else None
         tenant = access_token_tenant(access)
         principal = access_token_principal(access)
+        audit_tenant = tenant or "system"
 
         required_scope = self.tool_scopes.get(tool_name)
         if required_scope and required_scope not in access.scopes:
             self._deny(
-                tenant_id=case_tenant or tenant or "unknown",
+                tenant_id=audit_tenant,
                 case_id=case_id,
                 tool=tool_name,
                 principal=principal,
@@ -110,6 +104,7 @@ class GatewayGate:
                 detail={
                     "required_scope": required_scope,
                     "caller_tenant": tenant,
+                    "target_tenant": target_tenant,
                 },
             )
             return _json_error(
@@ -122,16 +117,16 @@ class GatewayGate:
                 challenge=(f'Bearer error="insufficient_scope", scope="{required_scope}"'),
             )
 
-        if tenant is None or (case_tenant is not None and case_tenant != tenant):
+        if tenant is None or (owners and tenant not in owners):
             self._deny(
-                tenant_id=case_tenant or tenant or "unknown",
+                tenant_id=audit_tenant,
                 case_id=case_id,
                 tool=tool_name,
                 principal=principal,
                 reason="tenant_mismatch",
                 detail={
                     "caller_tenant": tenant,
-                    "case_tenant": case_tenant,
+                    "target_tenant": target_tenant,
                     "required_scope": required_scope,
                 },
             )
@@ -141,9 +136,6 @@ class GatewayGate:
                     "error": "tenant_mismatch",
                     "error_description": ("The authenticated tenant does not own this case."),
                 },
-                challenge=(
-                    'Bearer error="insufficient_scope", error_description="Tenant mismatch"'
-                ),
             )
         return None
 
@@ -176,13 +168,15 @@ def _json_object(body: bytes) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _json_error(status_code: int, detail: dict[str, Any], *, challenge: str) -> Response:
+def _json_error(
+    status_code: int, detail: dict[str, Any], *, challenge: str | None = None
+) -> Response:
+    headers = {"Cache-Control": "no-store"}
+    if challenge is not None:
+        headers["WWW-Authenticate"] = challenge
     return Response(
         content=json.dumps(detail),
         status_code=status_code,
         media_type="application/json",
-        headers={
-            "WWW-Authenticate": challenge,
-            "Cache-Control": "no-store",
-        },
+        headers=headers,
     )

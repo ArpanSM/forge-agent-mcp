@@ -12,6 +12,7 @@ from starlette.middleware import Middleware
 
 from .auth import TOOL_SCOPES, LocalTokenIssuer, build_verifier
 from .gate import GatewayGate
+from .middleware import InvalidRequestEnvelopeMiddleware
 from .store import GatewayStore
 from .tools import register_tools
 
@@ -88,6 +89,7 @@ def create_gateway(
         auth=verifier,
     )
     register_tools(mcp, store)
+    mcp.add_middleware(InvalidRequestEnvelopeMiddleware())
     return Gateway(
         store=store,
         issuer=auth,

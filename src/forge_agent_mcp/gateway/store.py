@@ -11,17 +11,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..corpus.manifest import (
-    INVOICE_DOCUMENTS,
-    ONBOARDING_DOCUMENTS,
-    REQUIRED_RECORDS,
-    Manifest,
-)
+from ..corpus.manifest import Manifest
 from ..corpus.pdf import render_pdf
 from ..corpus.templates import build_documents, build_records
-from ..corpus.vocab import CaseType
+from ..corpus.vocab import CaseType, Recommendation
 from .models import (
     AuditEvent,
+    AuditEventType,
+    AuditOutcome,
     CarrierView,
     CaseRecord,
     CitationView,
@@ -32,13 +29,11 @@ from .models import (
     ExtractedField,
     ExtractionRecord,
     FlagRecord,
-    PolicyDecisionRule,
-    PolicyFlag,
     PolicyPack,
-    PolicyThresholds,
     RecommendationRecord,
     StoredRecord,
 )
+from .policies import build_policy_pack
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -200,36 +195,6 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def build_policy_pack(manifest: Manifest, case_type: CaseType) -> PolicyPack:
-    """Build the deterministic policy pack exposed by ``get_policy``."""
-
-    required_documents = ONBOARDING_DOCUMENTS if case_type == "onboarding" else INVOICE_DOCUMENTS
-    return PolicyPack(
-        policy_id=f"policy_{case_type}_v1",
-        case_type=case_type,
-        as_of=manifest.as_of.isoformat(),
-        thresholds=PolicyThresholds(),
-        required_documents=sorted(required_documents),
-        required_records=sorted(REQUIRED_RECORDS[case_type]),
-        flags=[
-            PolicyFlag(
-                code=flag.code,
-                severity=flag.severity,
-                rule=flag.rule,
-                decision_effect=flag.decision_effect,
-            )
-            for flag in manifest.flag_catalog
-        ],
-        decision_rule=PolicyDecisionRule(
-            hard_stop="Decline or escalate; never approve.",
-            high="Hold, request documents or attach a condition.",
-            medium="Conditional approval or adjusted reserve.",
-            low="Approve with clarification.",
-            clean="Approve.",
-        ),
-    )
-
-
 class GatewayStore:
     """Thin, typed SQLite adapter; every public read takes a tenant id."""
 
@@ -252,11 +217,19 @@ class GatewayStore:
 
     # -- seeding ---------------------------------------------------------
 
-    def seed_demo(self, manifest: Manifest, *, tenant_id: str) -> int:
+    def seed_demo(
+        self,
+        manifest: Manifest,
+        *,
+        tenant_id: str,
+        case_ids: set[str] | None = None,
+    ) -> int:
         """Seed cases and document metadata from the synthetic corpus manifest.
 
         The seed is idempotent: an already-seeded tenant is left untouched so a
-        restart never overwrites case state or audit rows.
+        restart never overwrites case state or audit rows. ``case_ids`` limits a
+        seed to a subset, which lets tests model tenant-owned cases without a
+        global case lookup.
         """
 
         with self._lock:
@@ -266,6 +239,8 @@ class GatewayStore:
             carriers = manifest.carrier_by_id
             with self._connection:
                 for case in manifest.cases:
+                    if case_ids is not None and case.case_id not in case_ids:
+                        continue
                     carrier = carriers[case.carrier_id]
                     carrier_view = CarrierView(
                         carrier_id=carrier.carrier_id,
@@ -378,7 +353,7 @@ class GatewayStore:
                             case.case_type,
                             case.carrier_id,
                             carrier_view.model_dump_json(),
-                            case.notes,
+                            "",
                             invoice_number,
                             invoice_content_hash,
                             _now(),
@@ -403,12 +378,12 @@ class GatewayStore:
         ).fetchone()
         return int(row["count"])
 
-    def case_tenant(self, case_id: str) -> str | None:
-        row = self._connection.execute(
-            "SELECT tenant_id FROM cases WHERE case_id = ? ORDER BY tenant_id LIMIT 1",
+    def case_tenants(self, case_id: str) -> list[str]:
+        rows = self._connection.execute(
+            "SELECT tenant_id FROM cases WHERE case_id = ? ORDER BY tenant_id",
             (case_id,),
-        ).fetchone()
-        return str(row["tenant_id"]) if row else None
+        ).fetchall()
+        return [str(row["tenant_id"]) for row in rows]
 
     def get_case(self, tenant_id: str, case_id: str) -> CaseRecord | None:
         row = self._connection.execute(
@@ -589,7 +564,7 @@ class GatewayStore:
         *,
         tenant_id: str,
         case_id: str,
-        recommendation: str,
+        recommendation: Recommendation,
         rationale: str,
         conditions: list[str],
         flags: list[FlagRecord],
@@ -647,13 +622,6 @@ class GatewayStore:
                     principal,
                     record.created_at,
                 ),
-            )
-            self._connection.execute(
-                """
-                UPDATE cases SET status = 'pending_approval'
-                WHERE tenant_id = ? AND case_id = ?
-                """,
-                (tenant_id, case_id),
             )
         return record
 
@@ -727,8 +695,8 @@ class GatewayStore:
         tenant_id: str,
         case_id: str | None,
         tool: str,
-        event: str,
-        outcome: str,
+        event: AuditEventType,
+        outcome: AuditOutcome,
         principal: str,
         input_hash: str | None = None,
         output_hash: str | None = None,
@@ -758,8 +726,6 @@ class GatewayStore:
             return int(cursor.lastrowid)
 
     def list_audit(self, tenant_id: str, case_id: str, *, limit: int = 100) -> list[AuditEvent]:
-        if not 1 <= limit <= 500:
-            raise ValueError("limit must be between 1 and 500")
         rows = self._connection.execute(
             """
             SELECT * FROM audit
