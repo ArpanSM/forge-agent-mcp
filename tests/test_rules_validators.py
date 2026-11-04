@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from tests.rules_helpers import review_corpus_case
+from forge_agent_mcp.extraction.extractor import extract_case
+from forge_agent_mcp.rules.corpus import load_case_packet
+from forge_agent_mcp.rules.engine import review
+from tests.rules_helpers import replace_field_value, review_corpus_case
 
 
 def test_identity_mismatch_across_w9_is_a_hard_stop(generated_corpus) -> None:
@@ -65,3 +68,51 @@ def test_watchlist_hit_is_a_hard_stop_that_escalates(generated_corpus) -> None:
     assert flag.evidence.record_path == "matches[0]"
     assert review.recommendation.recommendation == "escalate"
     assert review.recommendation.decision == "decline"
+
+
+def test_missing_required_document_requests_documents(generated_corpus) -> None:
+    review = review_corpus_case(generated_corpus, "case_inv_sagebrush")
+
+    flags = {flag.code: flag for flag in review.flags}
+    assert set(flags) == {"missing_document"}
+    flag = flags["missing_document"]
+    assert flag.severity == "high"
+    assert flag.evidence.missing_document_type == "proof_of_delivery"
+    assert review.recommendation.recommendation == "request_documents"
+    assert review.recommendation.decision == "request_documents"
+    assert review.recommendation.conditions == ["Obtain a signed proof of delivery."]
+    assert "The packet has no Proof of Delivery." in review.recommendation.evidence_gaps
+
+
+def test_recent_bank_change_is_high_and_combines_with_missing_document(generated_corpus) -> None:
+    review = review_corpus_case(generated_corpus, "case_onb_blue_alder")
+
+    flags = {flag.code: flag for flag in review.flags}
+    assert set(flags) == {"bank_account_changed", "missing_document"}
+    assert flags["bank_account_changed"].severity == "high"
+    assert flags["bank_account_changed"].evidence.document_id == "DOC-ONB-BLUE-ALDER-BANK"
+    assert review.recommendation.recommendation == "request_documents"
+    assert review.recommendation.conditions == [
+        "Obtain a current certificate of insurance.",
+        "Verify the new bank account with a dated bank letter.",
+    ]
+
+
+def test_bank_account_name_mismatch_is_high(generated_corpus) -> None:
+    _manifest, result = generated_corpus
+    extraction = extract_case("case_onb_ridgeline", result.root)
+    assert extraction.ok is True and extraction.data is not None
+    changed = replace_field_value(
+        extraction.data,
+        "bank_letter",
+        "account_holder",
+        "Ridgeline Holdings LLC",
+    )
+
+    outcome = review(changed, load_case_packet("case_onb_ridgeline", result.root))
+
+    flags = {flag.code: flag for flag in outcome.flags}
+    assert set(flags) == {"bank_account_name_mismatch"}
+    assert flags["bank_account_name_mismatch"].severity == "high"
+    assert outcome.recommendation.recommendation == "conditional_approve"
+    assert outcome.recommendation.conditions == ["Resolve the bank account-name mismatch."]

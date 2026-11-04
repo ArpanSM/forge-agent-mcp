@@ -7,14 +7,17 @@ from pathlib import Path
 
 from ..extraction.extractor import extract_case
 from ..extraction.models import CaseExtraction
-from .catalog import sort_flags
+from .catalog import FLAG_ORDER, sort_flags
 from .conditions import condition_for
 from .corpus import CasePacket, RuleEngineError, load_case_packet
 from .models import CaseReview, RecommendationResult, ReviewResult, RuleFlag
 from .validators import (
+    find_missing_documents,
     validate_authority,
+    validate_bank,
     validate_identity,
     validate_insurance,
+    validate_required_documents,
     validate_watchlist,
 )
 from .values import Documents
@@ -40,8 +43,26 @@ def validate(extraction: CaseExtraction, packet: CasePacket) -> list[RuleFlag]:
         *validate_authority(documents, as_of),
         *validate_identity(documents),
         *validate_insurance(documents, as_of),
+        *validate_bank(documents, as_of),
+        *validate_required_documents(extraction, packet),
     ]
     return sort_flags(flags)
+
+
+def _ordered_conditions(flags: list[RuleFlag]) -> list[str]:
+    ordered = sorted(
+        flags,
+        key=lambda flag: (
+            0 if flag.code == "missing_document" else 1,
+            FLAG_ORDER.get(flag.code, len(FLAG_ORDER)),
+        ),
+    )
+    conditions: list[str] = []
+    for flag in ordered:
+        condition = condition_for(flag)
+        if condition is not None and condition not in conditions:
+            conditions.append(condition)
+    return conditions
 
 
 def recommend(
@@ -68,18 +89,41 @@ def recommend(
             evidence_gaps=gaps,
         )
 
+    missing = [flag for flag in flags if flag.rule_id == "documents.required"]
+    if missing:
+        return RecommendationResult(
+            recommendation="request_documents",
+            decision="request_documents",
+            rationale="Required packet documents are missing; request them before any decision.",
+            conditions=_ordered_conditions(flags),
+            evidence_gaps=gaps,
+        )
+
+    highs = [flag for flag in flags if flag.severity == "high"]
+    if len(highs) >= 2:
+        return RecommendationResult(
+            recommendation="hold",
+            decision="request_documents",
+            rationale=f"{len(highs)} high-severity flags require a hold for manual review.",
+            conditions=_ordered_conditions(flags),
+            evidence_gaps=gaps,
+        )
+    if len(highs) == 1:
+        return RecommendationResult(
+            recommendation="conditional_approve",
+            decision="conditional_approve",
+            rationale="One high-severity flag requires a condition before approval.",
+            conditions=_ordered_conditions(flags),
+            evidence_gaps=gaps,
+        )
+
     mediums = [flag for flag in flags if flag.severity == "medium"]
     if mediums:
-        conditions: list[str] = []
-        for flag in mediums:
-            condition = condition_for(flag)
-            if condition is not None and condition not in conditions:
-                conditions.append(condition)
         return RecommendationResult(
             recommendation="conditional_approve",
             decision="conditional_approve",
             rationale="Only medium-severity flags remain; approve with conditions.",
-            conditions=conditions,
+            conditions=_ordered_conditions(flags),
             evidence_gaps=gaps,
         )
 
@@ -94,8 +138,13 @@ def recommend(
 
 def _evidence_gaps(extraction: CaseExtraction, packet: CasePacket) -> list[str]:
     gaps: list[str] = []
+    for missing in find_missing_documents(extraction, packet):
+        if missing.details not in gaps:
+            gaps.append(missing.details)
     for issue in extraction.issues:
-        gaps.append(f"{issue.document_id or 'case'}: {issue.message}")
+        gap = f"{issue.document_id or 'case'}: {issue.message}"
+        if gap not in gaps:
+            gaps.append(gap)
     return gaps
 
 

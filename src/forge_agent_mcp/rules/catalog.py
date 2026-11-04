@@ -147,6 +147,18 @@ FLAG_BY_CODE: dict[str, FlagDefinition] = {flag.code: flag for flag in FLAG_CATA
 FLAG_ORDER: dict[str, int] = {flag.code: index for index, flag in enumerate(FLAG_CATALOG)}
 SEVERITY_ORDER = {"hard_stop": 0, "high": 1, "medium": 2, "low": 3}
 
+DOCUMENT_ORDER: tuple[str, ...] = (
+    "application_kyc",
+    "w9",
+    "certificate_of_insurance",
+    "bank_letter",
+    "mc_authority",
+    "rate_confirmation",
+    "bill_of_lading",
+    "proof_of_delivery",
+    "invoice",
+)
+
 DOCUMENT_TITLES: dict[str, str] = {
     "application_kyc": "Carrier Application / KYC",
     "w9": "IRS Form W-9 (Synthetic)",
@@ -192,6 +204,7 @@ def sort_flags(flags: list[RuleFlag]) -> list[RuleFlag]:
 
 
 __all__ = [
+    "DOCUMENT_ORDER",
     "DOCUMENT_TITLES",
     "FLAG_BY_CODE",
     "FLAG_CATALOG",

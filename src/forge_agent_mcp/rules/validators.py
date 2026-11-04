@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
+from ..corpus.manifest import INVOICE_DOCUMENTS, ONBOARDING_DOCUMENTS
 from ..corpus.models import WatchlistRecord
-from ..extraction.models import ExtractedValue
-from .catalog import make_flag
+from ..extraction.models import CaseExtraction, DocumentExtraction, ExtractedValue
+from .catalog import DOCUMENT_ORDER, DOCUMENT_TITLES, make_flag
 from .corpus import CasePacket
 from .models import Evidence, RuleFlag
 from .values import (
@@ -127,6 +129,51 @@ def validate_identity(documents: Documents) -> list[RuleFlag]:
     ]
 
 
+def validate_bank(documents: Documents, as_of: date) -> list[RuleFlag]:
+    if documents.get("bank_letter") is None:
+        return []
+
+    flags: list[RuleFlag] = []
+    opened_value = documents.field("bank_letter", "account_opened_on")
+    opened_on = parse_date(opened_value.value if opened_value else None)
+    if (
+        opened_value is not None
+        and opened_on is not None
+        and opened_on > as_of - timedelta(days=30)
+    ):
+        flags.append(
+            make_flag(
+                "bank_account_changed",
+                rule_id="bank.account_age",
+                details=(
+                    f"Account opened on {opened_on.isoformat()}, within 30 days of the "
+                    f"as-of date {as_of.isoformat()}."
+                ),
+                evidence=evidence_for(opened_value, "bank_letter"),
+            )
+        )
+
+    holder_value = documents.field("bank_letter", "account_holder")
+    legal_name_value = documents.field("application_kyc", "legal_name")
+    if (
+        holder_value is not None
+        and legal_name_value is not None
+        and normalize_name(holder_value.value) != normalize_name(legal_name_value.value)
+    ):
+        flags.append(
+            make_flag(
+                "bank_account_name_mismatch",
+                rule_id="bank.account_name",
+                details=(
+                    f"Account holder {holder_value.value!r} differs from the legal name "
+                    f"{legal_name_value.value!r}."
+                ),
+                evidence=evidence_for(holder_value, "bank_letter"),
+            )
+        )
+    return flags
+
+
 def validate_insurance(documents: Documents, as_of: date) -> list[RuleFlag]:
     document = documents.get("certificate_of_insurance")
     if document is None:
@@ -233,9 +280,78 @@ def validate_watchlist(packet: CasePacket) -> list[RuleFlag]:
     ]
 
 
+@dataclass(frozen=True)
+class MissingDocument:
+    document_type: str
+    details: str
+    document: DocumentExtraction | None
+
+
+def find_missing_documents(
+    extraction: CaseExtraction,
+    packet: CasePacket,
+) -> list[MissingDocument]:
+    required = ONBOARDING_DOCUMENTS if packet.case_type == "onboarding" else INVOICE_DOCUMENTS
+    expected_by_id = packet.document_type_by_id
+    available: set[str] = set()
+    unreadable: dict[str, DocumentExtraction] = {}
+
+    for document in extraction.documents:
+        document_type = document.classification.document_type
+        if document_type == "unknown":
+            document_type = expected_by_id.get(document.classification.document_id)
+        if document_type not in required:
+            continue
+        if document.status == "extracted" and document.classification.document_type != "unknown":
+            available.add(document_type)
+        else:
+            unreadable[document_type] = document
+
+    missing = (set(extraction.missing_documents) | (required - available)) & required
+    results: list[MissingDocument] = []
+    for document_type in DOCUMENT_ORDER:
+        if document_type not in missing:
+            continue
+        title = DOCUMENT_TITLES[document_type]
+        document = unreadable.get(document_type)
+        if document is not None:
+            details = f"The {title} could not be read: {document.error or 'extraction failed'}."
+        else:
+            details = f"The packet has no {title}."
+        results.append(MissingDocument(document_type, details, document))
+    return results
+
+
+def validate_required_documents(
+    extraction: CaseExtraction,
+    packet: CasePacket,
+) -> list[RuleFlag]:
+    flags: list[RuleFlag] = []
+    for missing in find_missing_documents(extraction, packet):
+        flags.append(
+            make_flag(
+                "missing_document",
+                rule_id="documents.required",
+                details=missing.details,
+                evidence=Evidence(
+                    document_id=(
+                        missing.document.classification.document_id if missing.document else None
+                    ),
+                    document_type=missing.document_type,
+                    missing_document_type=missing.document_type,
+                ),
+            )
+        )
+    return flags
+
+
 __all__ = [
+    "MissingDocument",
+    "find_missing_documents",
     "validate_authority",
+    "validate_bank",
     "validate_identity",
     "validate_insurance",
+    "validate_required_documents",
     "validate_watchlist",
 ]

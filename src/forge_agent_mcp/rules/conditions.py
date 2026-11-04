@@ -19,6 +19,10 @@ def _missing_document_condition(flag: RuleFlag) -> str:
 def condition_for(flag: RuleFlag) -> str | None:
     if flag.rule_id == "authority.age":
         return "Obtain six months of authority history or adjust reserve."
+    if flag.rule_id == "bank.account_age":
+        return "Verify the new bank account with a dated bank letter."
+    if flag.rule_id == "bank.account_name":
+        return "Resolve the bank account-name mismatch."
     if flag.rule_id == "documents.required":
         return _missing_document_condition(flag)
     return None
