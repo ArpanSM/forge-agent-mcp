@@ -143,9 +143,7 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
             record_ids[record.record_type] = record.record_id
 
         invoice_hash = (
-            rendered_by_type["invoice"].content_hash
-            if "invoice" in rendered_by_type
-            else None
+            rendered_by_type["invoice"].content_hash if "invoice" in rendered_by_type else None
         )
         derive_flags(manifest, carrier, case, invoice_content_hash=invoice_hash)
 
@@ -221,9 +219,7 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
     return GenerationResult(root=root, index=index, cases=ground_truths)
 
 
-def generate_from_path(
-    manifest_path: str | Path, output_dir: str | Path
-) -> GenerationResult:
+def generate_from_path(manifest_path: str | Path, output_dir: str | Path) -> GenerationResult:
     return generate_corpus(load_manifest(manifest_path), output_dir)
 
 
@@ -249,10 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = load_manifest(args.manifest)
         if args.command == "validate":
-            print(
-                f"manifest valid: {len(manifest.carriers)} carriers, "
-                f"{len(manifest.cases)} cases"
-            )
+            print(f"manifest valid: {len(manifest.carriers)} carriers, {len(manifest.cases)} cases")
             return 0
 
         result = generate_corpus(manifest, args.out)

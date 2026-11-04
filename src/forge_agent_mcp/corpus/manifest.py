@@ -304,8 +304,7 @@ class Manifest(StrictModel):
 
 def _format_validation_error(exc: ValidationError) -> list[str]:
     return [
-        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-        for error in exc.errors()
+        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
     ]
 
 
@@ -516,23 +515,18 @@ def validate_manifest(raw: dict[str, Any]) -> Manifest:
 
     for case in held_out_cases:
         if case.category == "hard_stop" and len(case.expected_flags) < 2:
-            errors.append(
-                f"case {case.case_id}: held-out hard-stop case must be multi-flag"
-            )
+            errors.append(f"case {case.case_id}: held-out hard-stop case must be multi-flag")
 
     actual_eval = _distribution_counts(eval_cases)
     expected_eval = _expected_distribution(manifest.eval_distribution)
     if actual_eval != expected_eval:
-        errors.append(
-            f"eval distribution mismatch: expected {expected_eval}, found {actual_eval}"
-        )
+        errors.append(f"eval distribution mismatch: expected {expected_eval}, found {actual_eval}")
 
     actual_held_out = _distribution_counts(held_out_cases)
     expected_held_out = _expected_distribution(manifest.held_out_distribution)
     if actual_held_out != expected_held_out:
         errors.append(
-            f"held-out distribution mismatch: expected {expected_held_out}, "
-            f"found {actual_held_out}"
+            f"held-out distribution mismatch: expected {expected_held_out}, found {actual_held_out}"
         )
 
     archetypes = {archetype for case in manifest.cases for archetype in case.archetypes}

@@ -165,9 +165,7 @@ class OpenAICompatibleProvider:
         owns_client = self._http_client is None
         client = self._http_client or httpx.Client(timeout=self.timeout)
         try:
-            return client.post(
-                f"{self.base_url}/chat/completions", json=payload, headers=headers
-            )
+            return client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
         except httpx.HTTPError as exc:
             raise ProviderError(f"{self.name}: request failed: {type(exc).__name__}") from exc
         finally:

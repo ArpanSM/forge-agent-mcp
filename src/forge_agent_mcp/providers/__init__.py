@@ -38,9 +38,7 @@ class FallbackProvider:
         errors: list[str] = []
         for provider in (self.primary, self.fallback):
             try:
-                return provider.complete(
-                    messages, temperature=temperature, max_tokens=max_tokens
-                )
+                return provider.complete(messages, temperature=temperature, max_tokens=max_tokens)
             except ProviderError as exc:
                 errors.append(f"{provider.name}: {exc}")
         raise AllProvidersFailed("all providers failed: " + "; ".join(errors))

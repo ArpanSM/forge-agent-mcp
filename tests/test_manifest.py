@@ -47,9 +47,7 @@ def test_committed_manifest_covers_every_required_hard_stop_and_eval_archetype()
     manifest = load_manifest(MANIFEST_PATH)
     flags_by_code = {flag.code: flag for flag in manifest.flag_catalog}
 
-    hard_stop_codes = {
-        code for code, flag in flags_by_code.items() if flag.severity == "hard_stop"
-    }
+    hard_stop_codes = {code for code, flag in flags_by_code.items() if flag.severity == "hard_stop"}
     assert {
         "watchlist_hit",
         "authority_inactive",

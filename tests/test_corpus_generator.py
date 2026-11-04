@@ -119,9 +119,9 @@ def test_every_extracted_field_has_a_bbox_that_contains_the_source(generated) ->
                 needle = field.value if len(field.value) <= 60 else field.value[:40]
                 assert needle in text
                 hits = page.search_for(needle)
-                assert any(
-                    pymupdf.Rect(*citation.bbox).intersects(hit) for hit in hits
-                ), f"{case.case_id} {field.field}: bbox does not contain {needle!r}"
+                assert any(pymupdf.Rect(*citation.bbox).intersects(hit) for hit in hits), (
+                    f"{case.case_id} {field.field}: bbox does not contain {needle!r}"
+                )
 
 
 def test_ground_truth_flags_have_severity_and_evidence(generated) -> None:
@@ -189,11 +189,6 @@ def test_cli_validates_and_generates(tmp_path: Path) -> None:
     assert generator.main(["validate", "--manifest", str(MANIFEST_PATH)]) == 0
 
     out = tmp_path / "cli-corpus"
-    assert (
-        generator.main(
-            ["generate", "--manifest", str(MANIFEST_PATH), "--out", str(out)]
-        )
-        == 0
-    )
+    assert generator.main(["generate", "--manifest", str(MANIFEST_PATH), "--out", str(out)]) == 0
     assert (out / "corpus.json").exists()
     assert len(list(out.rglob("*.pdf"))) == 71

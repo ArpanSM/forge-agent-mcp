@@ -40,9 +40,9 @@ def derive_flags(
             codes.add("insurance_expired")
         if carrier.insurance.below_minimum:
             codes.add("insurance_below_minimum")
-        if (
-            carrier.w9_legal_name not in (None, carrier.legal_name)
-            or carrier.w9_ein not in (None, carrier.ein)
+        if carrier.w9_legal_name not in (None, carrier.legal_name) or carrier.w9_ein not in (
+            None,
+            carrier.ein,
         ):
             codes.add("identity_mismatch")
         if carrier.authority.status != "active":
@@ -67,8 +67,7 @@ def derive_flags(
         ):
             codes.add("duplicate_invoice")
         if (
-            invoice.linehaul + invoice.fuel_surcharge + invoice.accessorials
-            != invoice.total
+            invoice.linehaul + invoice.fuel_surcharge + invoice.accessorials != invoice.total
             or invoice.total != rate.total
         ):
             codes.add("invoice_arithmetic_mismatch")
@@ -157,9 +156,7 @@ def _evidence_for(
         return citation, details
 
     if code == "insurance_below_minimum":
-        citation = _cite(
-            field_citations, "certificate_of_insurance", "auto_liability_limit"
-        )
+        citation = _cite(field_citations, "certificate_of_insurance", "auto_liability_limit")
         details = (
             f"Auto liability {format_money(carrier.insurance.auto_liability_limit)} and "
             f"cargo {format_money(carrier.insurance.cargo_limit)} are below the "

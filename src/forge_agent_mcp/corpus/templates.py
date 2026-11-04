@@ -286,9 +286,7 @@ def build_records(manifest: Manifest, carrier: Carrier, case: Case) -> list[Reco
                 "record_type": record_type,
                 "synthetic": True,
                 "carrier_id": carrier.carrier_id,
-                "invoices": [
-                    invoice.model_dump(mode="json") for invoice in carrier.prior_invoices
-                ],
+                "invoices": [invoice.model_dump(mode="json") for invoice in carrier.prior_invoices],
             }
         elif record_type == "broker_bond":
             data = {

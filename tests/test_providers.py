@@ -129,9 +129,7 @@ def test_openai_compatible_provider_parses_structured_json() -> None:
         seen.append(request)
         return httpx.Response(
             200,
-            json=_completion_body(
-                '{"legal_name": "Ridgeline Haulage LLC", "ein": "00-0000001"}'
-            ),
+            json=_completion_body('{"legal_name": "Ridgeline Haulage LLC", "ein": "00-0000001"}'),
         )
 
     provider = OpenAICompatibleProvider(
