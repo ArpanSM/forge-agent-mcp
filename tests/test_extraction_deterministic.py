@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pymupdf
+
 from forge_agent_mcp.corpus.pdf import DocumentSpec, FieldSpec, render_pdf
 from forge_agent_mcp.extraction.citations import verify_citation
 from forge_agent_mcp.extraction.classify import classify_document
@@ -96,6 +98,33 @@ def test_extraction_finds_fields_that_continue_on_a_later_page(tmp_path: Path) -
     assert {field.citation.page for field in extraction.fields.values()} == {1, 2}
     for field in extraction.fields.values():
         verify_citation(path, field.citation, field.value)
+
+
+def test_noisy_scan_still_extracts_clean_fields(generated_corpus, tmp_path: Path) -> None:
+    _manifest, result = generated_corpus
+    case = next(case for case in result.index.cases if case.case_id == "case_onb_ridgeline")
+    document = next(item for item in case.documents if item.document_type == "w9")
+    source = result.root / "cases" / case.case_id / document.filename
+    noisy = tmp_path / "noisy-w9.pdf"
+
+    with pymupdf.open(source) as pdf:
+        page = pdf[0]
+        page.insert_text((54, 675), "SCAN NOISE ~ illegible fax stamp 0123456789")
+        pdf.save(noisy)
+
+    classification = classify_document(
+        noisy,
+        document_id=document.document_id,
+        title=document.title,
+        filename=document.filename,
+    )
+    extraction = extract_document(noisy, classification)
+
+    assert extraction.status == "extracted"
+    assert extraction.fields["legal_name"].value == "Ridgeline Haulage LLC"
+    assert extraction.fields["ein"].value == "00-0000101"
+    for value in extraction.fields.values():
+        verify_citation(noisy, value.citation, value.value)
 
 
 def test_missing_required_field_makes_the_document_needs_more_info(tmp_path: Path) -> None:

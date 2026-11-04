@@ -25,20 +25,18 @@ def _matches_label(line: Line, label: str) -> bool:
     return line.text == label or line.text.startswith(f"{label} ")
 
 
-def _value_words(lines: list[Line], index: int) -> tuple[list[Word], int]:
+def _value_words(lines: list[Line], index: int) -> list[Word]:
     line = lines[index]
     words = [word for word in line.words if word.bbox[0] >= VALUE_MIN_X]
     if not words:
-        return [], index
+        return []
 
-    last = index
     for next_index in range(index + 1, len(lines)):
         candidate = lines[next_index]
         if candidate.page != line.page or candidate.left < VALUE_MIN_X:
             break
         words.extend(candidate.words)
-        last = next_index
-    return words, last
+    return words
 
 
 def _bbox_for(words: list[Word], page_width: float, page_height: float) -> tuple[float, ...]:
@@ -63,7 +61,7 @@ def _extract_field(
     for index, line in enumerate(lines):
         if not _matches_label(line, definition.label):
             continue
-        words, _last = _value_words(lines, index)
+        words = _value_words(lines, index)
         if not words:
             continue
         quote = " ".join(word.text for word in words)

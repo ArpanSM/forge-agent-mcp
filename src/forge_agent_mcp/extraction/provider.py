@@ -24,7 +24,13 @@ from ..providers.base import (
 from .citations import CitationError, DocumentText
 from .fields import FieldDefinition, field_definitions
 from .layout import evidence_text
-from .models import Classification, DocumentExtraction, ExtractedValue, ExtractionCode
+from .models import (
+    Classification,
+    DocumentExtraction,
+    DocumentType,
+    ExtractedValue,
+    ExtractionCode,
+)
 
 SYSTEM_PROMPT = (
     "You extract fields from a synthetic freight-underwriting document. "
@@ -32,7 +38,7 @@ SYSTEM_PROMPT = (
     "document; never infer, normalise, repair or guess. Each value needs a citation: "
     "the document id, the 1-based page, the bbox [x0, y0, x1, y1] in PDF points "
     "(top-left origin) that contains the quote, and the exact source quote. "
-    "The quote must contain the value. Each page below lists numbered lines as "
+    "The quote must contain the value. Each page below lists lines as "
     "[x0,y0,x1,y1] text; use those coordinates for the citation. "
     "If a required field is not present, omit it rather than inventing a value."
 )
@@ -51,8 +57,8 @@ def _schema_name(document_type: str) -> str:
 
 
 @cache
-def extraction_schema(document_type: str) -> type[BaseModel]:
-    definitions = field_definitions(document_type)  # type: ignore[arg-type]
+def extraction_schema(document_type: DocumentType) -> type[BaseModel]:
+    definitions = field_definitions(document_type)
     if not definitions:
         raise ValueError(f"no field schema for document type {document_type!r}")
     fields: dict[str, Any] = {}
@@ -155,7 +161,7 @@ def extract_with_provider(
                 fields=fields,
             )
         except ProviderSchemaError as exc:
-            last_code: ExtractionCode = "schema_error"
+            last_code = "schema_error"
             last_message = str(exc)
         except OutputValidationError as exc:
             last_code = exc.code
