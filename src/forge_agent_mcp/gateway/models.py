@@ -193,7 +193,7 @@ class Envelope[DataType](StrictModel):
 class PolicyThresholds(StrictModel):
     min_auto_liability: int = 1_000_000
     min_cargo_limit: int = 100_000
-    min_authority_age_days: int = 180
+    min_authority_age_days: int = 183  # six months; matches the corpus label generator
     bank_change_window_days: int = 30
     high_flag_hold_threshold: int = 2
 

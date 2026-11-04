@@ -22,6 +22,8 @@ business-tool gateway. Read these before changing code:
 ```bash
 make install   # editable install with dev dependencies
 make corpus    # regenerate the synthetic corpus into data/corpus/
+make extract CASE=<case_id>  # deterministic extraction with citations
+make review CASE=<case_id>   # deterministic flags, recommendation and evidence
 make test      # pytest
 make lint      # ruff
 make gateway   # FastMCP gateway over Streamable HTTP

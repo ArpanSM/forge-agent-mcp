@@ -2,7 +2,7 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, and the MCP gateway with auth, tenant isolation and audit. Agent, console and evals next.
+**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, and the MCP gateway with auth, tenant isolation and audit. Agent, console and evals next.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - [Gateway guide](docs/gateway.md)
@@ -19,6 +19,7 @@ make test            # offline pytest suite; live tests are marked and deselecte
 make test-live       # opt-in live model tests (sets FORGE_LIVE_MODEL=1)
 make lint            # ruff
 make extract CASE=case_onb_ridgeline   # classify documents and print cited fields
+make review CASE=case_inv_northgate    # flags, severity, recommendation and evidence
 make gateway         # FastMCP Streamable HTTP server on 127.0.0.1:8765/mcp
 make gateway-client  # list tools, read a case, show a scoped 403
 make gateway-demo    # in-process server + client demo
@@ -64,6 +65,27 @@ so extraction never invents a value. Reports are written to
 `data/extractions/<case>.json` for the later rule engine and gateway. The live model test
 is marked `live`, excluded from `make test`, and additionally requires
 `FORGE_LIVE_MODEL=1`; `make test-live` sets that flag.
+
+## Deterministic rule engine
+
+`make review` extracts a case with the offline deterministic parser, loads the typed
+structured records (watchlist, prior invoices, UCC and broker bond), runs every validator
+and prints the flags with their rule id and citation. The engine is pure Python and never
+calls a model or the network.
+
+Hard stops (watchlist hit, identity mismatch, inactive authority, expired or underinsured
+policy, duplicate invoice) always decline or escalate. Two or more high flags hold the
+case; one high flag is a conditional approval. Missing required documents always request
+documents, even when another high flag is present. An invoice whose total or line items
+cannot be parsed is flagged high and held as unverifiable. Medium flags add conditions;
+low flags approve with clarification.
+
+Text aimed at an AI agent is flagged as `document_instruction_injection`, quoted nowhere,
+ignored, and held for manual review. The injection cannot change the risk facts or
+override a hard stop. Demo thresholds live in
+[`src/forge_agent_mcp/rules/policy.py`](src/forge_agent_mcp/rules/policy.py) and mirror
+the gateway policy pack. The corpus also catalogues `altered_metadata` and
+`formatting_inconsistency`; both are deferred to a later slice and are not emitted here.
 
 ## MCP gateway
 

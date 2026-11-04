@@ -6,7 +6,7 @@ OFFLINE ?= 0
 
 export PYTHONPATH
 
-.PHONY: install corpus test test-live lint extract gateway gateway-client gateway-demo
+.PHONY: install corpus test test-live lint extract review gateway gateway-client gateway-demo
 
 install:
 	$(PYTHON) -m pip install $(PIP_FLAGS) -e ".[dev]"
@@ -28,6 +28,11 @@ extract:
 	@test -n "$(CASE)" || (echo "usage: make extract CASE=<case_id>" >&2; exit 2)
 	@test -f data/corpus/corpus.json || $(MAKE) corpus
 	$(PYTHON) -m forge_agent_mcp.extraction --case "$(CASE)" $(if $(filter 1,$(OFFLINE)),--offline,)
+
+review:
+	@test -n "$(CASE)" || (echo "usage: make review CASE=<case_id>" >&2; exit 2)
+	@test -f data/corpus/corpus.json || $(MAKE) corpus
+	$(PYTHON) -m forge_agent_mcp.rules --case "$(CASE)"
 
 gateway:
 	$(PYTHON) -m forge_agent_mcp.gateway serve
