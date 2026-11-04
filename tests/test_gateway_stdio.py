@@ -7,7 +7,10 @@ from pathlib import Path
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
-from tests.conftest import MANIFEST_PATH, RunningGateway
+from forge_agent_mcp.gateway.store import GatewayStore
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MANIFEST_PATH = PROJECT_ROOT / "corpus" / "manifest.json"
 
 EXPECTED_TOOLS = [
     "read_case",
@@ -22,7 +25,7 @@ EXPECTED_TOOLS = [
 
 
 def test_stdio_serves_the_same_tools_without_auth_and_warns(
-    gateway: RunningGateway, seeded_db: Path, tmp_path: Path
+    seeded_db: Path, tmp_path: Path
 ) -> None:
     log_file = tmp_path / "stdio-stderr.log"
     transport = StdioTransport(
@@ -66,7 +69,11 @@ def test_stdio_serves_the_same_tools_without_auth_and_warns(
     assert write.is_error is False
     assert write.structured_content["data"]["recorded_by"] == "stdio-local"
 
-    events = gateway.store.list_audit("tenant_northwind", "case_onb_ridgeline")
+    store = GatewayStore(seeded_db)
+    try:
+        events = store.list_audit("tenant_northwind", "case_onb_ridgeline")
+    finally:
+        store.close()
     assert any(event.principal == "stdio-local" for event in events)
 
     stderr = log_file.read_text(encoding="utf-8")
