@@ -21,6 +21,7 @@ build/
 
 # Generated corpus and local data
 data/corpus/
+data/extractions/
 data/raw/
 data/private/
 
