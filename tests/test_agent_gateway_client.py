@@ -117,3 +117,19 @@ def test_agent_runs_an_invoice_request_documents_case_over_real_mcp_http(
     assert case is not None and case.status == "awaiting_documents"
     stage = gateway.store.latest_crm_stage(TENANT, "case_inv_northgate")
     assert stage is not None and stage.stage == "awaiting_documents"
+
+
+def test_every_corpus_archetype_reaches_pending_approval_over_real_mcp_http(
+    gateway, generated_corpus, tmp_path
+) -> None:
+    _manifest, corpus = generated_corpus
+    runner = _runner(gateway, tmp_path, corpus.root)
+
+    failures: list[tuple[str, str, str | None]] = []
+    for case in corpus.index.cases:
+        result = runner.start(case.case_id)
+        if result.status != "pending_approval":
+            failures.append((case.case_id, result.status, result.error))
+
+    assert failures == []
+    assert len(corpus.index.cases) == 16

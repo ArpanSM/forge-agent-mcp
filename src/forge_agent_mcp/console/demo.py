@@ -85,9 +85,9 @@ def _print_pending(results: list[CaseResult]) -> None:
         print(f"  - {carrier} · {result.case_id} · {result.case_type} · recommended {decision}")
 
 
-def _print_walkthrough(console_url: str) -> None:
+def _print_walkthrough(console_url: str, gateway_url: str) -> None:
     print(f"\nForge reviewer console: {console_url}")
-    print("Gateway (MCP):         Streamable HTTP on the demo port")
+    print(f"Gateway (MCP):         {gateway_url}")
     print(
         "\nWalkthrough:\n"
         f"  1. Open {console_url} in a browser.\n"
@@ -208,10 +208,10 @@ def run_demo(args: argparse.Namespace) -> int:
             _print_completed(completed)
             if not args.serve:
                 return 0
-            _print_walkthrough(console_url)
+            _print_walkthrough(console_url, gateway_url)
         else:
             _print_pending(started)
-            _print_walkthrough(console_url)
+            _print_walkthrough(console_url, gateway_url)
 
         print("\nPress Ctrl+C to stop the demo.\n")
         uvicorn.run(

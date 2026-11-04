@@ -145,8 +145,7 @@
     </button>
   </div>
   <div class="card-body" style="padding-top:8px"
-       id="audit-body"
-       {% if detail.pending_approval %}hx-get="/cases/{{ detail.view.case_id }}/audit" hx-trigger="every 6s" hx-swap="innerHTML"{% endif %}>
+       id="audit-body">
     {% include "_audit.html" %}
   </div>
   <div class="audit-foot">
