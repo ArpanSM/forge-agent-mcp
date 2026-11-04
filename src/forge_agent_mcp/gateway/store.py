@@ -11,20 +11,31 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..corpus.manifest import Manifest
+from ..corpus.manifest import (
+    INVOICE_DOCUMENTS,
+    ONBOARDING_DOCUMENTS,
+    REQUIRED_RECORDS,
+    Manifest,
+)
 from ..corpus.pdf import render_pdf
 from ..corpus.templates import build_documents, build_records
+from ..corpus.vocab import CaseType
 from .models import (
     AuditEvent,
     CarrierView,
     CaseRecord,
     CitationView,
+    DecisionRecord,
     DocumentBBox,
     DocumentPage,
     DocumentRecord,
     ExtractedField,
     ExtractionRecord,
     FlagRecord,
+    PolicyDecisionRule,
+    PolicyFlag,
+    PolicyPack,
+    PolicyThresholds,
     RecommendationRecord,
     StoredRecord,
 )
@@ -69,6 +80,13 @@ CREATE TABLE IF NOT EXISTS records (
     record_type TEXT NOT NULL,
     data_json TEXT NOT NULL,
     PRIMARY KEY (tenant_id, case_id, record_id)
+);
+
+CREATE TABLE IF NOT EXISTS policies (
+    tenant_id TEXT NOT NULL,
+    case_type TEXT NOT NULL,
+    policy_json TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, case_type)
 );
 
 CREATE TABLE IF NOT EXISTS extractions (
@@ -180,6 +198,36 @@ END;
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def build_policy_pack(manifest: Manifest, case_type: CaseType) -> PolicyPack:
+    """Build the deterministic policy pack exposed by ``get_policy``."""
+
+    required_documents = ONBOARDING_DOCUMENTS if case_type == "onboarding" else INVOICE_DOCUMENTS
+    return PolicyPack(
+        policy_id=f"policy_{case_type}_v1",
+        case_type=case_type,
+        as_of=manifest.as_of.isoformat(),
+        thresholds=PolicyThresholds(),
+        required_documents=sorted(required_documents),
+        required_records=sorted(REQUIRED_RECORDS[case_type]),
+        flags=[
+            PolicyFlag(
+                code=flag.code,
+                severity=flag.severity,
+                rule=flag.rule,
+                decision_effect=flag.decision_effect,
+            )
+            for flag in manifest.flag_catalog
+        ],
+        decision_rule=PolicyDecisionRule(
+            hard_stop="Decline or escalate; never approve.",
+            high="Hold, request documents or attach a condition.",
+            medium="Conditional approval or adjusted reserve.",
+            low="Approve with clarification.",
+            clean="Approve.",
+        ),
+    )
 
 
 class GatewayStore:
@@ -336,6 +384,15 @@ class GatewayStore:
                             _now(),
                         ),
                     )
+                for case_type in ("onboarding", "invoice"):
+                    policy = build_policy_pack(manifest, case_type)
+                    self._connection.execute(
+                        """
+                        INSERT INTO policies (tenant_id, case_type, policy_json)
+                        VALUES (?, ?, ?)
+                        """,
+                        (tenant_id, case_type, policy.model_dump_json()),
+                    )
             return self.case_count(tenant_id)
 
     # -- case reads ------------------------------------------------------
@@ -459,6 +516,13 @@ class GatewayStore:
             )
             for row in rows
         ]
+
+    def get_policy(self, tenant_id: str, case_type: CaseType) -> PolicyPack | None:
+        row = self._connection.execute(
+            "SELECT policy_json FROM policies WHERE tenant_id = ? AND case_type = ?",
+            (tenant_id, case_type),
+        ).fetchone()
+        return PolicyPack.model_validate_json(row["policy_json"]) if row else None
 
     # -- case state writes ----------------------------------------------
 
@@ -631,6 +695,29 @@ class GatewayStore:
             )
             for row in rows
         ]
+
+    def latest_decision(self, tenant_id: str, case_id: str) -> DecisionRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM decisions
+            WHERE tenant_id = ? AND case_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (tenant_id, case_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return DecisionRecord(
+            decision_id=row["decision_id"],
+            case_id=row["case_id"],
+            decision=row["decision"],
+            rationale=row["rationale"],
+            conditions=json.loads(row["conditions_json"]),
+            approver=row["approver"],
+            principal=row["principal"],
+            created_at=row["created_at"],
+        )
 
     # -- audit -----------------------------------------------------------
 

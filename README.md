@@ -2,9 +2,10 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator and cited extraction.
+**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, and the MCP gateway with auth, tenant isolation and audit. Agent, console and evals next.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
+- [Gateway guide](docs/gateway.md)
 - [Domain glossary](CONTEXT.md)
 - [Agent guide](AGENTS.md)
 - [Architecture decisions](docs/adr/)
@@ -12,12 +13,15 @@ A freight underwriting agent and an MCP business-tool gateway, built as a public
 ## Repository commands
 
 ```bash
-make install   # editable install with dev dependencies
-make corpus    # regenerate the synthetic corpus into data/corpus/
-make test      # offline pytest suite; live tests are marked and deselected
-make test-live # opt-in live model tests (sets FORGE_LIVE_MODEL=1)
-make lint      # ruff
+make install         # editable install with dev dependencies
+make corpus          # regenerate the synthetic corpus into data/corpus/
+make test            # offline pytest suite; live tests are marked and deselected
+make test-live       # opt-in live model tests (sets FORGE_LIVE_MODEL=1)
+make lint            # ruff
 make extract CASE=case_onb_ridgeline   # classify documents and print cited fields
+make gateway         # FastMCP Streamable HTTP server on 127.0.0.1:8765/mcp
+make gateway-client  # list tools, read a case, show a scoped 403
+make gateway-demo    # in-process server + client demo
 ```
 
 If the system Python is externally managed, pass the flags your environment needs, for
@@ -48,6 +52,18 @@ so extraction never invents a value. Reports are written to
 `data/extractions/<case>.json` for the later rule engine and gateway. The live model test
 is marked `live`, excluded from `make test`, and additionally requires
 `FORGE_LIVE_MODEL=1`; `make test-live` sets that flag.
+
+## MCP gateway
+
+`make gateway` starts the FastMCP server over Streamable HTTP at
+`http://127.0.0.1:8765/mcp`. It exposes eight typed tools with `freight:read`,
+`freight:write` and `freight:approve` scopes, a local HS256 issuer, a tenant check and an
+append-only audit log. `make gateway-client` lists the tools, reads a case and shows a
+scoped 403.
+
+stdio is available for local tools and tests, but it is a trusted local transport and
+skips auth; it is not the scoped demo. The startup warning and
+[`docs/gateway.md`](docs/gateway.md) say so explicitly.
 
 ## The problem
 

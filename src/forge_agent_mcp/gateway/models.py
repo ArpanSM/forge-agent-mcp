@@ -193,3 +193,107 @@ class PolicyPack(StrictModel):
     required_records: list[str]
     flags: list[PolicyFlag]
     decision_rule: PolicyDecisionRule
+
+
+class CaseDocumentView(StrictModel):
+    document_id: str
+    document_type: str
+    title: str
+    pages: int = Field(ge=1)
+    content_hash: str
+    status: str
+
+
+class CaseView(StrictModel):
+    tenant_id: str
+    case_id: str
+    case_type: CaseType
+    status: str
+    carrier: CarrierView
+    summary: str
+    documents: list[CaseDocumentView]
+    extraction_count: int = Field(ge=0)
+    recommendation: RecommendationRecord | None = None
+    flags: list[FlagRecord]
+    decision: DecisionRecord | None = None
+
+
+class DocumentView(StrictModel):
+    document_id: str
+    case_id: str
+    document_type: str
+    title: str
+    text: str
+    pages: list[DocumentPage]
+    bboxes: list[DocumentBBox]
+    content_hash: str
+    sha256: str
+
+
+class DuplicateMatch(StrictModel):
+    kind: Literal["invoice_number", "document_hash"]
+    value: str
+    case_id: str
+    document_id: str | None = None
+    invoice_number: str | None = None
+    load_number: str | None = None
+
+
+class DuplicateView(StrictModel):
+    case_id: str
+    invoice_number: str | None = None
+    document_hash: str | None = None
+    duplicate: bool
+    matches: list[DuplicateMatch]
+
+
+class AuditView(StrictModel):
+    case_id: str
+    events: list[AuditEvent]
+
+
+class ReadCaseInput(StrictModel):
+    case_id: str = Field(min_length=1)
+
+
+class GetDocumentInput(StrictModel):
+    case_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+
+
+class GetPolicyInput(StrictModel):
+    case_id: str = Field(min_length=1)
+
+
+class CheckDuplicateInput(StrictModel):
+    case_id: str = Field(min_length=1)
+    invoice_number: str | None = None
+    document_hash: str | None = None
+
+
+class RecordExtractionInput(StrictModel):
+    case_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    fields: list[ExtractedField] = Field(min_length=1)
+
+
+class RecordRecommendationInput(StrictModel):
+    case_id: str = Field(min_length=1)
+    recommendation: Recommendation
+    rationale: str
+    conditions: list[str] = Field(default_factory=list)
+    flags: list[FlagRecord] = Field(default_factory=list)
+
+
+class CreateDecisionInput(StrictModel):
+    case_id: str = Field(min_length=1)
+    decision: Decision
+    rationale: str
+    conditions: list[str] = Field(default_factory=list)
+    approval_token: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class GetAuditInput(StrictModel):
+    case_id: str = Field(min_length=1)
+    limit: int = Field(default=100, ge=1, le=500)
