@@ -7,6 +7,7 @@ import pytest
 from forge_agent_mcp.extraction.citations import verify_citation
 from forge_agent_mcp.extraction.extractor import ExtractionError, extract_case
 from forge_agent_mcp.extraction.models import CaseExtraction
+from forge_agent_mcp.providers.fake import FakeProvider
 
 
 def test_extract_case_classifies_documents_and_keeps_citations(generated_corpus) -> None:
@@ -56,3 +57,20 @@ def test_extract_case_rejects_an_unknown_case(generated_corpus) -> None:
 def test_extract_case_reports_a_missing_corpus(tmp_path: Path) -> None:
     with pytest.raises(ExtractionError, match="corpus"):
         extract_case("case_onb_ridgeline", tmp_path / "absent")
+
+
+def test_extract_case_becomes_needs_more_info_after_two_schema_failures(
+    generated_corpus,
+) -> None:
+    _manifest, result = generated_corpus
+    provider = FakeProvider(structured={"legal_name": {"value": "guessed value"}})
+
+    report = extract_case("case_onb_ridgeline", result.root, provider=provider)
+
+    assert report.status == "needs_more_info"
+    assert report.provider == "fake"
+    assert len(report.documents) == 5
+    assert all(document.status == "needs_more_info" for document in report.documents)
+    assert len(report.issues) == 5
+    assert {issue.code for issue in report.issues} == {"schema_error"}
+    assert len(provider.calls) == 10
