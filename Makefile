@@ -6,7 +6,7 @@ OFFLINE ?= 0
 
 export PYTHONPATH
 
-.PHONY: install corpus test lint extract
+.PHONY: install corpus test test-live lint extract
 
 install:
 	$(PYTHON) -m pip install $(PIP_FLAGS) -e ".[dev]"
@@ -16,6 +16,9 @@ corpus:
 
 test:
 	$(PYTHON) -m pytest
+
+test-live:
+	FORGE_LIVE_MODEL=1 $(PYTHON) -m pytest -m live
 
 lint:
 	$(PYTHON) -m ruff check .

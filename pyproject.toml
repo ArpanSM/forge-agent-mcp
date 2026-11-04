@@ -29,8 +29,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not live'"
 pythonpath = ["src"]
+markers = [
+    "live: calls a real model provider; excluded from the default suite",
+]
 
 [tool.ruff]
 line-length = 100

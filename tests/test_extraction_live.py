@@ -10,14 +10,15 @@ from forge_agent_mcp.extraction.classify import classify_document
 from forge_agent_mcp.extraction.provider import extract_with_provider
 from forge_agent_mcp.providers import build_provider
 
-LIVE_CONFIGURED = bool(
-    os.environ.get("ORCAROUTER_API_KEY") or os.environ.get("FORGE_LIVE_MODEL") == "1"
-)
+LIVE_ENABLED = os.environ.get("FORGE_LIVE_MODEL") == "1"
 
-pytestmark = pytest.mark.skipif(
-    not LIVE_CONFIGURED,
-    reason="live model not configured; set ORCAROUTER_API_KEY or FORGE_LIVE_MODEL=1",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        not LIVE_ENABLED,
+        reason="live model not enabled; set FORGE_LIVE_MODEL=1 and configure a provider",
+    ),
+]
 
 
 def test_live_provider_extracts_a_w9_with_verified_citations(generated_corpus) -> None:

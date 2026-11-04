@@ -9,7 +9,8 @@ from pathlib import Path
 
 from ..config import Settings
 from ..providers import build_provider
-from .extractor import ExtractionError, extract_case
+from ..providers.base import ProviderError
+from .extractor import extract_case
 from .models import CaseExtraction
 
 DEFAULT_CORPUS = Path("data") / "corpus"
@@ -43,12 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _select_provider(offline: bool):
     if offline:
         return None
-    settings = Settings()
-    if settings.model_provider == "fake":
-        # The fake provider has no document knowledge; the template parser is the
-        # offline extraction path.
-        return None
-    return build_provider(settings)
+    return build_provider(Settings())
 
 
 def _report_path(case_id: str, out: str | None) -> Path:
@@ -64,13 +60,16 @@ def _print_report(report: CaseExtraction, out: Path) -> None:
         classification = document.classification
         print(
             f"- {classification.document_id} {classification.document_type} "
-            f"({classification.confidence:.2f}) status={document.status}"
+            f"({classification.confidence:.2f}) classifier={classification.classifier} "
+            f"status={document.status}"
         )
+        if document.fallback_used:
+            print("  fallback: deterministic template parser used")
         if document.error:
             print(f"  error: {document.error}")
         for key, value in document.fields.items():
             citation = value.citation
-            print(f"  {key} = {json.dumps(value.value)}")
+            print(f"  {key} = {json.dumps(value.value)} confidence={value.confidence:.2f}")
             print(
                 f"    cite: {citation.document_id} page {citation.page} "
                 f"bbox={list(citation.bbox)} quote={json.dumps(citation.quote)}"
@@ -87,10 +86,20 @@ def main(argv: list[str] | None = None) -> int:
     out = _report_path(args.case, args.out)
     try:
         provider = _select_provider(args.offline)
-        report = extract_case(args.case, args.corpus, provider=provider)
+    except ProviderError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    result = extract_case(args.case, args.corpus, provider=provider)
+    if not result.ok or result.data is None:
+        print(f"error: {result.message or 'extraction failed'}", file=sys.stderr)
+        return 2
+
+    report = result.data
+    try:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    except (ExtractionError, OSError, ValueError) as exc:
+    except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
