@@ -18,6 +18,7 @@ from .validators import (
     validate_duplicates,
     validate_identity,
     validate_insurance,
+    validate_injection,
     validate_invoice_arithmetic,
     validate_optional_fields,
     validate_pod,
@@ -54,6 +55,7 @@ def validate(extraction: CaseExtraction, packet: CasePacket) -> list[RuleFlag]:
         *validate_pod(documents),
         *validate_round_dollar(documents),
         *validate_optional_fields(documents),
+        *validate_injection(extraction),
         *validate_required_documents(extraction, packet),
     ]
     return sort_flags(flags)
@@ -96,6 +98,19 @@ def recommend(
             decision="decline",
             rationale=rationale,
             conditions=[],
+            evidence_gaps=gaps,
+        )
+
+    injections = [flag for flag in flags if flag.code == "document_instruction_injection"]
+    if injections:
+        return RecommendationResult(
+            recommendation="hold",
+            decision="request_documents",
+            rationale=(
+                "Document-embedded instructions were detected and ignored; "
+                "hold the packet for manual review."
+            ),
+            conditions=_ordered_conditions(flags),
             evidence_gaps=gaps,
         )
 

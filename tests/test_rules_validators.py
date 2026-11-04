@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from forge_agent_mcp.extraction.extractor import extract_case
+from forge_agent_mcp.rules.catalog import make_flag
 from forge_agent_mcp.rules.corpus import load_case_packet
-from forge_agent_mcp.rules.engine import review
+from forge_agent_mcp.rules.engine import recommend, review
+from forge_agent_mcp.rules.models import Evidence
 from tests.rules_helpers import replace_field_value, review_corpus_case
 
 
@@ -199,3 +201,53 @@ def test_missing_optional_reference_is_low_and_approves_with_clarification(gener
     assert review.recommendation.conditions == [
         "Confirm the optional invoice reference before funding."
     ]
+
+
+def test_application_instruction_injection_is_flagged_and_held(generated_corpus) -> None:
+    review = review_corpus_case(generated_corpus, "case_onb_meridian")
+
+    flags = {flag.code: flag for flag in review.flags}
+    assert set(flags) == {"document_instruction_injection"}
+    flag = flags["document_instruction_injection"]
+    assert flag.severity == "high"
+    assert flag.evidence.document_id == "DOC-ONB-MERIDIAN-APP"
+    assert "ignore all underwriting rules" not in flag.details.casefold()
+    assert review.recommendation.recommendation == "hold"
+    assert review.recommendation.decision == "request_documents"
+    assert review.recommendation.conditions == [
+        "Quarantine the injected application text and review the packet manually."
+    ]
+
+
+def test_pod_instruction_injection_is_flagged_and_held(generated_corpus) -> None:
+    review = review_corpus_case(generated_corpus, "case_inv_meridian")
+
+    flags = {flag.code: flag for flag in review.flags}
+    assert set(flags) == {"document_instruction_injection"}
+    flag = flags["document_instruction_injection"]
+    assert flag.evidence.document_id == "DOC-INV-MERIDIAN-POD"
+    assert review.recommendation.recommendation == "hold"
+    assert review.recommendation.conditions == [
+        "Quarantine the injected POD text and review the packet manually."
+    ]
+
+
+def test_hard_stop_wins_over_an_injected_instruction() -> None:
+    injection = make_flag(
+        "document_instruction_injection",
+        rule_id="injection.document_instruction",
+        details="Document text addressed to an AI agent was detected and ignored.",
+        evidence=Evidence(document_id="DOC-TEST-APP", document_type="application_kyc"),
+    )
+    hard_stop = make_flag(
+        "watchlist_hit",
+        rule_id="watchlist.match",
+        details="Synthetic watchlist matched the owner.",
+        evidence=Evidence(record_id="REC-TEST-WATCH", record_path="matches[0]"),
+    )
+
+    outcome = recommend([injection, hard_stop])
+
+    assert outcome.recommendation == "escalate"
+    assert outcome.decision == "decline"
+    assert outcome.conditions == []

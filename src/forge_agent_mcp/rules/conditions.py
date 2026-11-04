@@ -6,6 +6,14 @@ from .catalog import DOCUMENT_TITLES
 from .models import RuleFlag
 
 
+def _injection_location(document_type: str | None) -> str:
+    if document_type == "application_kyc":
+        return "application"
+    if document_type == "proof_of_delivery":
+        return "POD"
+    return DOCUMENT_TITLES.get(document_type or "", "document").lower()
+
+
 def _missing_document_condition(flag: RuleFlag) -> str:
     document_type = flag.evidence.missing_document_type
     if document_type == "proof_of_delivery":
@@ -35,6 +43,9 @@ def condition_for(flag: RuleFlag) -> str | None:
         return "Adjust reserve for the round-dollar invoice."
     if flag.rule_id == "invoice.optional_reference":
         return "Confirm the optional invoice reference before funding."
+    if flag.rule_id == "injection.document_instruction":
+        location = _injection_location(flag.evidence.document_type)
+        return f"Quarantine the injected {location} text and review the packet manually."
     if flag.rule_id == "documents.required":
         return _missing_document_condition(flag)
     return None

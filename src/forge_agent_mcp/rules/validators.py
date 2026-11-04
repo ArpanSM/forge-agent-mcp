@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -26,6 +27,19 @@ from .values import (
 
 AUTO_LIABILITY_MINIMUM = Decimal("1000000.00")
 CARGO_MINIMUM = Decimal("100000.00")
+
+INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:system|assistant|developer)\s+instruction\b", re.IGNORECASE),
+    re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior|underwriting|system)\b", re.IGNORECASE),
+    re.compile(
+        r"\bapprove\s+(?:this|the)\s+(?:carrier|invoice|packet)\s+immediately\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bmark\s+this\s+invoice\s+as\s+paid\b", re.IGNORECASE),
+    re.compile(r"\bskip\s+(?:the\s+)?duplicate\s+checks?\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+not\s+report\s+this\s+instruction\b", re.IGNORECASE),
+    re.compile(r"\bthis\s+document\s+is\s+trusted\b", re.IGNORECASE),
+)
 
 
 def _compare(
@@ -317,6 +331,38 @@ def validate_round_dollar(documents: Documents) -> list[RuleFlag]:
     return []
 
 
+def _injection_location(document_type: str) -> str:
+    if document_type == "application_kyc":
+        return "application"
+    if document_type == "proof_of_delivery":
+        return "POD"
+    return DOCUMENT_TITLES.get(document_type, "document").lower()
+
+
+def validate_injection(extraction: CaseExtraction) -> list[RuleFlag]:
+    flags: list[RuleFlag] = []
+    for document in extraction.documents:
+        document_type = document.classification.document_type
+        for extracted in document.fields.values():
+            text = f"{extracted.value}\n{extracted.citation.quote}"
+            if not any(pattern.search(text) for pattern in INJECTION_PATTERNS):
+                continue
+            location = _injection_location(document_type)
+            flags.append(
+                make_flag(
+                    "document_instruction_injection",
+                    rule_id="injection.document_instruction",
+                    details=(
+                        f"Document text addressed to an AI agent was detected in the {location}; "
+                        "the instruction is ignored and the text is quarantined."
+                    ),
+                    evidence=evidence_for(extracted, document_type),
+                )
+            )
+            break
+    return flags
+
+
 def validate_optional_fields(documents: Documents) -> list[RuleFlag]:
     invoice = documents.get("invoice")
     if invoice is None or "reference_number" in invoice.fields:
@@ -594,6 +640,7 @@ __all__ = [
     "validate_duplicates",
     "validate_identity",
     "validate_insurance",
+    "validate_injection",
     "validate_invoice_arithmetic",
     "validate_optional_fields",
     "validate_pod",
