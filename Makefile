@@ -6,7 +6,7 @@ OFFLINE ?= 0
 
 export PYTHONPATH
 
-.PHONY: install corpus test test-live lint extract review gateway gateway-client gateway-demo write-demo
+.PHONY: install corpus test test-live lint extract review gateway gateway-client gateway-demo write-demo console demo demo-auto
 
 install:
 	$(PYTHON) -m pip install $(PIP_FLAGS) -e ".[dev]"
@@ -45,3 +45,15 @@ gateway-demo:
 
 write-demo:
 	$(PYTHON) -m forge_agent_mcp.gateway write-demo
+
+console:
+	@test -f data/corpus/corpus.json || $(MAKE) corpus
+	$(PYTHON) -m forge_agent_mcp.console demo
+
+demo:
+	@test -f data/corpus/corpus.json || $(MAKE) corpus
+	$(PYTHON) -m forge_agent_mcp.console demo
+
+demo-auto:
+	@test -f data/corpus/corpus.json || $(MAKE) corpus
+	$(PYTHON) -m forge_agent_mcp.console demo --auto

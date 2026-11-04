@@ -2,7 +2,7 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, and the MCP gateway with auth, tenant isolation, audit and the approval-token/idempotent decision write. Agent, console and evals next.
+**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, the MCP gateway with auth, tenant isolation, audit and the approval-token/idempotent decision write, and the LangGraph agent plus reviewer console. Evaluation next.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - [Gateway guide](docs/gateway.md)
@@ -24,6 +24,8 @@ make gateway         # requires FORGE_APPROVAL_SECRET; FastMCP HTTP on 127.0.0.1
 make gateway-client  # list tools, read a case, show a scoped 403
 make gateway-demo    # in-process server + client demo
 make write-demo      # approval refusal, commit, replay, conflict and audit chain
+make demo            # gateway + agent + console; two cases wait for the human review
+make demo-auto       # the same two cases completed by a scripted reviewer
 ```
 
 If the system Python is externally managed, pass the flags your environment needs, for
@@ -109,6 +111,35 @@ audit chain.
 stdio is available for local tools and tests, but it is a trusted local transport and
 skips auth; it is not the scoped demo. The startup warning and
 [`docs/gateway.md`](docs/gateway.md) say so explicitly.
+
+## Agent and reviewer console
+
+The agent is one LangGraph 1.2.19 graph with a SQLite checkpointer. It runs eight stages:
+intake and classification, extraction with citations, deterministic validation,
+cross-checking (including the gateway duplicate check), summary and recommendation,
+human approval (`interrupt()`), execution through MCP, and audit verification. A pending
+approval survives a process restart; resuming uses `Command(resume=...)` and the same
+thread id, so extraction and recommendation are not re-run.
+
+The reviewer console is FastAPI, Jinja2 and HTMX with no build step. It shows the case
+queue, documents, extracted fields with page and bbox citations, flags grouped by severity,
+the recommendation and conditions, the decision form, and the audit preview. The console
+mints two things only after the reviewer acts: the single-use HMAC approval token bound to
+the case, decision and payload, and a short-lived `freight:approve` bearer token for the
+decision call. The long-lived agent token only carries `freight:read` and `freight:write`.
+Hard stops cannot be approved from the UI or the service; the reviewer can decline or
+request documents.
+
+```bash
+make demo       # gateway + agent + console; two cases wait at the approval interrupt
+make demo-auto  # the same two cases completed by a scripted reviewer
+```
+
+`make demo` prints the console URL and a walkthrough. It does not open a browser. The
+onboarding case recommends approve; the invoice case recommends request documents. The
+decision is written once with a deterministic idempotency key, and the audit chain is
+verified on the way back. See [`docs/agent.md`](docs/agent.md) for the state model, token
+boundary, idempotency and failure paths.
 
 ## The problem
 

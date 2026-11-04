@@ -135,8 +135,10 @@ append `write_denied`. SQLite triggers reject `UPDATE` and `DELETE` on the audit
 
 ## Deliberately out of scope
 
-This slice does not implement the LangGraph agent and console (#7), the eval harness (#8),
-OAuth 2.1 authorization server, PRM/RFC 9728, RFC 8707, PKCE, CIMD, JWKS rotation, TLS,
-revocation, a real IdP, rate limits or a real CRM. The "CRM stage" is a local SQLite row,
-not an external integration. Those are production work or later tickets, not implied by
-this demo.
+This slice does not implement the eval harness (#8), OAuth 2.1 authorization server,
+PRM/RFC 9728, RFC 8707, PKCE, CIMD, JWKS rotation, TLS, revocation, a real IdP, rate limits
+or a real CRM. The "CRM stage" is a local SQLite row, not an external integration. Those
+are production work or later tickets, not implied by this demo.
+
+The LangGraph agent and reviewer console (#7) are implemented on top of this gateway; see
+[`docs/agent.md`](agent.md) for the interrupt/resume, console approval and idempotency path.

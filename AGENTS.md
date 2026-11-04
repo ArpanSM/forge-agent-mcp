@@ -30,4 +30,6 @@ make gateway   # FastMCP gateway over Streamable HTTP
 make gateway-client # client demo against a running gateway
 make gateway-demo   # in-process server + client demo
 make write-demo     # approval refusal, commit, replay, conflict and audit chain
+make demo           # gateway + agent + console; two cases wait for the human review
+make demo-auto      # the same two cases completed by a scripted reviewer
 ```
