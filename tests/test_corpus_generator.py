@@ -71,6 +71,14 @@ def test_generation_is_deterministic(generated) -> None:
     assert before == after
 
 
+def test_generation_is_deterministic_across_directories(tmp_path: Path) -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    first = generator.generate_corpus(manifest, tmp_path / "first")
+    second = generator.generate_corpus(manifest, tmp_path / "second")
+
+    assert _file_hashes(first.root) == _file_hashes(second.root)
+
+
 def test_generated_index_matches_corpus_json(generated) -> None:
     _manifest, result = generated
     raw = json.loads((result.root / "corpus.json").read_text(encoding="utf-8"))

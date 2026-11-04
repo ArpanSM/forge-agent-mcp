@@ -18,6 +18,9 @@ make test      # offline pytest suite
 make lint      # ruff
 ```
 
+If the system Python is externally managed, pass the flags your environment needs, for
+example `make install PIP_FLAGS="--user --break-system-packages"`.
+
 The corpus manifest at [`corpus/manifest.json`](corpus/manifest.json) is the source of
 truth for the 8 carriers, 16 cases, document types, archetypes and the 12 + 4 eval/held-out
 split. Generated PDFs and ground truth are written to `data/corpus/` and are gitignored.
