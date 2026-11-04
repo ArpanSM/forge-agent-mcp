@@ -20,7 +20,7 @@ make test-live       # opt-in live model tests (sets FORGE_LIVE_MODEL=1)
 make lint            # ruff
 make extract CASE=case_onb_ridgeline   # classify documents and print cited fields
 make review CASE=case_inv_northgate    # flags, severity, recommendation and evidence
-make gateway         # FastMCP Streamable HTTP server on 127.0.0.1:8765/mcp
+make gateway         # requires FORGE_APPROVAL_SECRET; FastMCP HTTP on 127.0.0.1:8765/mcp
 make gateway-client  # list tools, read a case, show a scoped 403
 make gateway-demo    # in-process server + client demo
 make write-demo      # approval refusal, commit, replay, conflict and audit chain
@@ -97,11 +97,14 @@ append-only audit log. `make gateway-client` lists the tools, reads a case and s
 scoped 403.
 
 `create_decision` also requires a console-minted HMAC approval token bound to the tenant,
-case, decision, payload and expiry, with a single-use `jti`. The decision, CRM stage,
+case, decision, payload and expiry, with a single-use `jti`. The gateway refuses to start
+without `FORGE_APPROVAL_SECRET`; the agent never holds that key. The decision, CRM stage,
 approval use, idempotency row and audit event commit in one transaction. A same-key retry
 replays the stored result; changed arguments return `idempotency_conflict`; expired,
-mismatched, forged and reused tokens are refused. `make write-demo` runs every path and
-prints the audit chain.
+mismatched, forged and reused tokens are refused; an omitted or empty token returns
+`approval_required`. `request_documents` records a non-funding request with CRM stage
+`awaiting_documents`, never an approval. `make write-demo` runs every path and prints the
+audit chain.
 
 stdio is available for local tools and tests, but it is a trusted local transport and
 skips auth; it is not the scoped demo. The startup warning and

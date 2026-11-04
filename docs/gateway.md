@@ -5,11 +5,17 @@ business tools over Streamable HTTP and stdio. HTTP is the security boundary; st
 trusted local convenience and **skips authentication and scopes**.
 
 ```bash
-make gateway        # HTTP on 127.0.0.1:8765/mcp, seeded from corpus/manifest.json
+FORGE_APPROVAL_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+  make gateway    # HTTP on 127.0.0.1:8765/mcp, seeded from corpus/manifest.json
 make gateway-client # list tools, read a case, show a read token getting a 403
 make gateway-demo   # start an in-process server and run the same client
+make write-demo     # approval, replay, conflict and audit walkthrough
 python -m forge_agent_mcp.gateway issue --scope freight:read
 ```
+
+`make gateway` requires `FORGE_APPROVAL_SECRET`; there is no runtime default. The
+`write-demo` and `gateway-demo` commands generate an ephemeral in-process key when the
+variable is unset.
 
 The database path is owned by the CLI and defaults to `data/gateway.db`; the library store
 requires an explicit path. The corpus manifest is the source of truth for cases, documents
@@ -62,7 +68,8 @@ local demo and put TLS in front of HTTP.
 ## Approval token
 
 `create_decision` requires a second, console-minted HMAC-SHA256 token. The console holds
-`GATEWAY_APPROVAL_SECRET`; the agent never does. The token is a signed JWT with:
+`FORGE_APPROVAL_SECRET`; the agent never does and there is no built-in default. The token is
+a signed JWT with:
 
 | Claim | Meaning |
 |---|---|
@@ -77,13 +84,16 @@ local demo and put TLS in front of HTTP.
 | `jti` | unique token id, single-use after a commit |
 
 The gateway verifies the signature, issuer, audience, expiry, tenant, case, decision and
-payload hash before writing. A missing token returns `approval_required`; a bad signature
-or wrong issuer/audience returns `approval_malformed`; a past `exp` returns
-`approval_expired`; a token bound to another tenant, case, decision or payload returns
-`approval_mismatch`; a consumed `jti` with a new idempotency key returns
+payload hash before writing. An omitted or empty token returns `approval_required`; a bad
+signature, blank approver or wrong issuer/audience returns `approval_malformed`; a past
+`exp` returns `approval_expired`; a token bound to another tenant, case, decision or payload
+returns `approval_mismatch`; a consumed `jti` with a new idempotency key returns
 `approval_reused`. Each refusal appends one `write_denied` audit row and writes no
 decision, CRM stage or idempotency result. A denied approval can be retried with a fresh
 token and the same idempotency key.
+
+`request_documents` is a non-funding request: it records the request decision and CRM stage
+`awaiting_documents`, never an approval or a funding decision.
 
 ## Idempotency and the decision transaction
 
@@ -102,8 +112,8 @@ status, approval use, idempotency row and `write_committed` audit row.
   key free for a retry.
 
 `make write-demo` runs the whole path against a local server and prints the audit chain:
-missing approval -> refusal, valid approval -> commit, same key -> replay, changed args ->
-conflict, then expired, mismatched and reused tokens -> rejection, with exactly one
+omitted/empty approval -> refusal, valid approval -> commit, same key -> replay, changed
+args -> conflict, then expired, mismatched and reused tokens -> rejection, with exactly one
 decision and one CRM stage at the end.
 
 ## stdio
