@@ -88,12 +88,11 @@ class GatewayClient(Protocol):
 class FastMCPGatewayClient:
     """Synchronous facade over the async FastMCP Streamable HTTP client."""
 
-    def __init__(self, url: str, token: str, *, timeout: float = 30.0) -> None:
+    def __init__(self, url: str, token: str) -> None:
         if not token.strip():
             raise ValueError("a gateway bearer token is required")
         self.url = url
         self.token = token
-        self.timeout = timeout
 
     def _call(self, name: str, arguments: dict[str, Any], *, token: str | None = None) -> Any:
         return asyncio.run(

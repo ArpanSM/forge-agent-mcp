@@ -128,8 +128,19 @@ def test_every_corpus_archetype_reaches_pending_approval_over_real_mcp_http(
     failures: list[tuple[str, str, str | None]] = []
     for case in corpus.index.cases:
         result = runner.start(case.case_id)
-        if result.status != "pending_approval":
-            failures.append((case.case_id, result.status, result.error))
+        if (
+            result.status != "pending_approval"
+            or result.recommendation is None
+            or result.recommendation.decision != case.expected_decision
+        ):
+            failures.append(
+                (
+                    case.case_id,
+                    result.status,
+                    result.error
+                    or (result.recommendation.decision if result.recommendation else None),
+                )
+            )
 
     assert failures == []
     assert len(corpus.index.cases) == 16

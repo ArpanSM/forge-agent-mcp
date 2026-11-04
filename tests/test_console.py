@@ -295,6 +295,33 @@ def test_a_completed_case_cannot_be_decided_again(generated_corpus, tmp_path) ->
     assert len(fake.decision_calls) == 1
 
 
+def test_console_refuses_a_second_write_if_the_gateway_already_committed(
+    generated_corpus, tmp_path
+) -> None:
+    client, fake, service = _console(generated_corpus, tmp_path)
+    _run(client, ONBOARDING_CASE)
+    pending = service.runner.get(ONBOARDING_CASE)
+    assert pending is not None and pending.recommendation is not None
+
+    # Simulate a crash after the gateway commit but before the graph checkpoint.
+    fake.create_decision(
+        ONBOARDING_CASE,
+        "approve",
+        pending.recommendation.rationale,
+        [],
+        "simulated-approval-token",
+        "simulated-idempotency-key",
+        "simulated-approval-jwt",
+    )
+
+    response = _decide(client, ONBOARDING_CASE, action="approve", note="Retry after a crash.")
+
+    assert response.status_code == 409
+    assert "already" in response.text.lower()
+    assert len(fake.decision_calls) == 1
+    assert "Approved" in response.text
+
+
 def test_unknown_case_is_not_found(generated_corpus, tmp_path) -> None:
     client, _fake, _service = _console(generated_corpus, tmp_path)
 

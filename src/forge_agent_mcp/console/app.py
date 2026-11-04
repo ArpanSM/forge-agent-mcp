@@ -61,7 +61,6 @@ def create_console_app(service: ConsoleService) -> FastAPI:
         return {
             "request": request,
             "detail": detail,
-            "queue": service.queue(),
             "default_approver": service.default_approver,
             "recommended_action": detail.recommended_action,
             "error": None,

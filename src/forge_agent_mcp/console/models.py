@@ -79,11 +79,19 @@ class CaseDetail:
 
     @property
     def pending_approval(self) -> bool:
-        return self.result is not None and self.result.status == "pending_approval"
+        return (
+            self.result is not None
+            and self.result.status == "pending_approval"
+            and self.view.decision is None
+        )
 
     @property
     def decision(self) -> Decision | None:
-        return self.result.decision.decision if self.result and self.result.decision else None
+        if self.result and self.result.decision:
+            return self.result.decision.decision
+        if self.view.decision:
+            return self.view.decision.decision
+        return None
 
     @property
     def recommended_action(self) -> Decision | None:

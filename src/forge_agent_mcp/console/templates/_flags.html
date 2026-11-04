@@ -16,7 +16,7 @@
             <p class="flag-title">{{ flag.code | replace('_', ' ') | capitalize }}</p>
           </div>
           <p class="flag-evidence">{{ flag.details }}</p>
-          <div class="flag-trigger">{{ flag.rule_id }} · {{ flag.rule }}</div>
+          <div class="flag-trigger">{{ flag.rule_id | default(flag.code) }} · {{ flag.rule }}</div>
         </div>
         <div class="flag-source">
           {% if flag.evidence.document_id %}

@@ -169,14 +169,29 @@ class ConsoleService:
                             else None
                         )
                     ),
-                    decision=result.decision.decision if result and result.decision else None,
+                    decision=(
+                        result.decision.decision
+                        if result and result.decision
+                        else (view.decision.decision if view.decision else None)
+                    ),
                     flags=counts,
-                    pending_approval=result is not None and result.status == "pending_approval",
+                    pending_approval=(
+                        result is not None
+                        and result.status == "pending_approval"
+                        and view.decision is None
+                    ),
                 )
             )
         return items
 
     def _status(self, view: CaseView, result: CaseResult | None) -> str:
+        if view.decision is not None:
+            return {
+                "approve": "approved",
+                "conditional_approve": "approved",
+                "decline": "declined",
+                "request_documents": "awaiting_documents",
+            }[view.decision.decision]
         if result is not None:
             if result.status == "pending_approval":
                 return "pending_approval"
@@ -224,13 +239,19 @@ class ConsoleService:
 
     def run(self, case_id: str) -> CaseResult:
         try:
-            self.gateway.read_case(case_id)
+            view = self.gateway.read_case(case_id)
         except GatewayToolError as exc:
             raise ConsoleError(
                 "case_not_found",
                 f"Case {case_id!r} was not found.",
                 status_code=404,
             ) from exc
+        if view.decision is not None:
+            raise ConsoleError(
+                "case_already_decided",
+                f"Case {case_id!r} already has a decision and cannot be run again.",
+                status_code=409,
+            )
         existing = self.runner.get(case_id)
         if existing is not None and existing.decision is not None:
             raise ConsoleError(
@@ -289,6 +310,16 @@ class ConsoleService:
             raise ConsoleError(
                 "case_not_pending",
                 f"Case {case_id!r} is not waiting for a human decision.",
+                status_code=409,
+            )
+        try:
+            live = self.gateway.read_case(case_id)
+        except GatewayToolError as exc:
+            raise ConsoleError(exc.code, exc.message, status_code=502) from exc
+        if live.decision is not None:
+            raise ConsoleError(
+                "case_already_decided",
+                f"Case {case_id!r} already has a committed decision; it cannot be written again.",
                 status_code=409,
             )
         blocker = blocked_reason(current.flags)

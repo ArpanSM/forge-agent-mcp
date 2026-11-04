@@ -1,5 +1,6 @@
 {% set rec = detail.result.recommendation if detail.result else None %}
 {% set decision = detail.decision %}
+{% set decision_record = detail.result.decision if detail.result and detail.result.decision else detail.view.decision %}
 {% if detail.pending_approval and rec %}
   {% set default_action = recommended_action if recommended_action in detail.allowed_actions else detail.allowed_actions[0] %}
   <div class="card decision-card" id="decision" style="border-top:2px solid var(--tone-high)">
@@ -63,24 +64,24 @@
         <div class="commit-icon"><svg class="icon"><use href="#i-check"></use></svg></div>
         <div>
           <h3>{{ decision | decision_status }}</h3>
-          <p>{{ detail.result.decision.rationale }}</p>
+          <p>{{ decision_record.rationale }}</p>
         </div>
       </div>
       <dl class="commit-rows">
-        <div class="commit-row"><dt>Decision</dt><dd>{{ detail.result.decision.decision_id }}</dd></div>
-        <div class="commit-row"><dt>Approver</dt><dd>{{ detail.result.decision.approver or '—' }}</dd></div>
+        <div class="commit-row"><dt>Decision</dt><dd>{{ decision_record.decision_id }}</dd></div>
+        <div class="commit-row"><dt>Approver</dt><dd>{{ decision_record.approver or '—' }}</dd></div>
         <div class="commit-row"><dt>CRM stage</dt><dd>{{ detail.result.case.crm_stage.stage if detail.result.case and detail.result.case.crm_stage else (detail.view.crm_stage.stage if detail.view.crm_stage else '—') }}</dd></div>
-        <div class="commit-row"><dt>Idempotency</dt><dd>{{ detail.result.idempotency_key or '—' }}</dd></div>
-        <div class="commit-row"><dt>Audit</dt><dd>{% if detail.result.audit_verified %}<span class="auth-ok">verified</span>{% else %}<span class="auth-warn">not verified</span>{% endif %}</dd></div>
-        <div class="commit-row"><dt>Committed</dt><dd>{{ detail.result.decision.created_at | human_time }}</dd></div>
+        <div class="commit-row"><dt>Idempotency</dt><dd>{{ (detail.result.idempotency_key if detail.result else '—') or '—' }}</dd></div>
+        <div class="commit-row"><dt>Audit</dt><dd>{% if detail.result and detail.result.audit_verified %}<span class="auth-ok">verified</span>{% else %}<span class="auth-warn">not verified</span>{% endif %}</dd></div>
+        <div class="commit-row"><dt>Committed</dt><dd>{{ decision_record.created_at | human_time }}</dd></div>
       </dl>
-      {% if detail.result.decision.conditions %}
+      {% if decision_record.conditions %}
       <div class="commit-note">
         <span>Conditions</span>
-        <p>{{ detail.result.decision.conditions | join('\n') }}</p>
+        <p>{{ decision_record.conditions | join('\n') }}</p>
       </div>
       {% endif %}
-      {% if detail.result.decision.decision == 'request_documents' %}
+      {% if decision_record.decision == 'request_documents' %}
       <p class="note-hint" style="margin-top:8px">A document request is a non-funding decision: the CRM stage is <code>awaiting_documents</code> and no approval is recorded.</p>
       {% endif %}
     </div>

@@ -192,13 +192,18 @@ def _status_and_stage(values: dict[str, Any]) -> tuple[CaseRunStatus, str]:
     stage = transitions[-1] if transitions else "not_started"
     decision = values.get("decision")
     if decision is not None:
+        decision_value = (
+            decision.get("decision")
+            if isinstance(decision, dict)
+            else getattr(decision, "decision", None)
+        )
         mapping: dict[str, CaseRunStatus] = {
             "approve": "approved",
             "conditional_approve": "approved",
             "decline": "declined",
             "request_documents": "awaiting_documents",
         }
-        return mapping.get(str(decision.get("decision")), "failed"), stage
+        return mapping.get(str(decision_value), "failed"), stage
     if values.get("error"):
         return "failed", stage
     if values.get("approval_request") is not None:
