@@ -2,7 +2,7 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** implementation started — scaffold, model-provider abstraction and synthetic corpus generator.
+**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator and cited extraction.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - [Domain glossary](CONTEXT.md)
@@ -14,8 +14,10 @@ A freight underwriting agent and an MCP business-tool gateway, built as a public
 ```bash
 make install   # editable install with dev dependencies
 make corpus    # regenerate the synthetic corpus into data/corpus/
-make test      # offline pytest suite
+make test      # offline pytest suite; live tests are marked and deselected
+make test-live # opt-in live model tests (sets FORGE_LIVE_MODEL=1)
 make lint      # ruff
+make extract CASE=case_onb_ridgeline   # classify documents and print cited fields
 ```
 
 If the system Python is externally managed, pass the flags your environment needs, for
@@ -24,6 +26,28 @@ example `make install PIP_FLAGS="--user --break-system-packages"`.
 The corpus manifest at [`corpus/manifest.json`](corpus/manifest.json) is the source of
 truth for the 8 carriers, 16 cases, document types, archetypes and the 12 + 4 eval/held-out
 split. Generated PDFs and ground truth are written to `data/corpus/` and are gitignored.
+
+## Extraction with citations
+
+`make extract` classifies every document in a case from its page text and extracts the
+fields the rule engine needs. Each value carries a citation with the document id, page,
+bbox and the verbatim source quote; a citation is accepted only if the quote is on that
+page and the bbox covers it.
+
+The default `MODEL_PROVIDER=fake` selects `FakeProvider`; because it has no document
+knowledge, classification and extraction fall back to the deterministic template parser,
+so the command runs offline. Set `MODEL_PROVIDER=orcarouter` and `ORCAROUTER_API_KEY`, or
+`MODEL_PROVIDER=lfm3`, to use a live provider. Classification and extraction both go
+through the provider abstraction, with the keyword and template parsers as validated
+fallbacks.
+
+A schema or citation failure is retried once. If the provider still fails, extraction
+tries the deterministic parser for a known template; only if that also fails is the
+document reported as `needs_more_info`. Every accepted value keeps a verified citation,
+so extraction never invents a value. Reports are written to
+`data/extractions/<case>.json` for the later rule engine and gateway. The live model test
+is marked `live`, excluded from `make test`, and additionally requires
+`FORGE_LIVE_MODEL=1`; `make test-live` sets that flag.
 
 ## The problem
 
