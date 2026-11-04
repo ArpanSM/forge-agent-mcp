@@ -179,6 +179,30 @@ def test_read_token_calling_a_write_tool_gets_403_with_challenge(gateway) -> Non
     assert denied[-1].detail["reason"] == "insufficient_scope"
 
 
+def test_write_scope_cannot_call_create_decision(gateway) -> None:
+    token = gateway.token(subject="agent-writer", scopes=[READ_SCOPE, WRITE_SCOPE])
+    arguments = {
+        "case_id": "case_onb_ridgeline",
+        "decision": "approve",
+        "rationale": "Should require approval scope.",
+        "conditions": [],
+        "approval_token": "unused",
+        "idempotency_key": "idem-write-only",
+    }
+
+    response = _rpc(
+        gateway,
+        token,
+        "tools/call",
+        {"name": "create_decision", "arguments": arguments},
+        tool_name="create_decision",
+    )
+
+    assert response.status_code == 403
+    assert 'scope="freight:approve"' in response.headers.get("www-authenticate", "")
+    assert json.loads(response.text)["error"] == "insufficient_scope"
+
+
 def test_cross_tenant_case_gets_403_and_an_auth_denied_audit_row(gateway) -> None:
     token = gateway.token(
         subject="agent-other-tenant",
@@ -225,6 +249,9 @@ def test_read_tools_return_typed_results_and_append_read_audit(gateway) -> None:
                 "check_duplicate", {"case_id": "case_inv_cedar_pine"}
             )
             clean = await client.call_tool_mcp("check_duplicate", {"case_id": "case_inv_ridgeline"})
+            hash_duplicate = await client.call_tool_mcp(
+                "check_duplicate", {"case_id": "case_inv_harborline"}
+            )
             envelope = await client.call_tool_mcp(
                 "get_audit", {"case_id": "case_onb_ridgeline", "limit": 50}
             )
@@ -234,6 +261,7 @@ def test_read_tools_return_typed_results_and_append_read_audit(gateway) -> None:
                 "policy": policy,
                 "duplicate": duplicate,
                 "clean": clean,
+                "hash_duplicate": hash_duplicate,
                 "audit": envelope,
             }
 
@@ -268,6 +296,10 @@ def test_read_tools_return_typed_results_and_append_read_audit(gateway) -> None:
     clean = results["clean"].structured_content["data"]
     assert clean["duplicate"] is False
     assert clean["matches"] == []
+
+    hash_duplicate = results["hash_duplicate"].structured_content["data"]
+    assert hash_duplicate["duplicate"] is True
+    assert any(match["kind"] == "document_hash" for match in hash_duplicate["matches"])
 
     events = results["audit"].structured_content["data"]["events"]
     assert {event["tool"] for event in events} >= {
