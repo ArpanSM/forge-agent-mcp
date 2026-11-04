@@ -181,7 +181,7 @@ class IdempotencyRecord(StrictModel):
     tool: str = Field(min_length=1)
     key: str = Field(min_length=1)
     args_hash: str = Field(min_length=64, max_length=64)
-    result: dict[str, Any]
+    result: DecisionRecord
     created_at: str
 
 
@@ -339,7 +339,7 @@ class CreateDecisionInput(StrictModel):
     decision: Decision
     rationale: str = Field(min_length=1)
     conditions: list[str] = Field(default_factory=list)
-    approval_token: str
+    approval_token: str = ""
     idempotency_key: str = Field(min_length=1)
 
 

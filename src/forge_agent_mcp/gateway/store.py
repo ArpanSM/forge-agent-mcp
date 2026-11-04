@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import threading
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,8 @@ from ..corpus.manifest import Manifest
 from ..corpus.pdf import render_pdf
 from ..corpus.templates import build_documents, build_records
 from ..corpus.vocab import CaseType, Decision, Recommendation
+from .approval import ApprovalClaims
+from .canonical import canonical_hash
 from .models import (
     ApprovalRecord,
     AuditEvent,
@@ -23,7 +25,9 @@ from .models import (
     AuditOutcome,
     CarrierView,
     CaseRecord,
+    CaseStatus,
     CitationView,
+    CreateDecisionInput,
     CrmStage,
     CrmStageRecord,
     DecisionRecord,
@@ -213,11 +217,6 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _canonical_hash(payload: Any) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 class IdempotencyConflictError(Exception):
     """The same key was already used with different canonical arguments."""
 
@@ -226,19 +225,33 @@ class ApprovalReusedError(Exception):
     """The approval token's ``jti`` was already consumed by a committed write."""
 
 
-CRM_STAGE_BY_DECISION: dict[str, CrmStage] = {
-    "approve": "approved",
-    "conditional_approve": "conditionally_approved",
-    "decline": "declined",
-    "request_documents": "awaiting_documents",
+class UnknownDecisionError(Exception):
+    """The decision is outside the four values the CRM mapping understands."""
+
+
+@dataclass(frozen=True)
+class DecisionOutcome:
+    crm_stage: CrmStage
+    case_status: CaseStatus
+
+
+DECISION_OUTCOMES: dict[Decision, DecisionOutcome] = {
+    "approve": DecisionOutcome(crm_stage="approved", case_status="approved"),
+    "conditional_approve": DecisionOutcome(
+        crm_stage="conditionally_approved", case_status="approved"
+    ),
+    "decline": DecisionOutcome(crm_stage="declined", case_status="declined"),
+    "request_documents": DecisionOutcome(
+        crm_stage="awaiting_documents", case_status="awaiting_documents"
+    ),
 }
 
-CASE_STATUS_BY_DECISION: dict[str, str] = {
-    "approve": "approved",
-    "conditional_approve": "approved",
-    "decline": "declined",
-    "request_documents": "awaiting_documents",
-}
+
+def decision_outcome(decision: Decision) -> DecisionOutcome:
+    try:
+        return DECISION_OUTCOMES[decision]
+    except KeyError as exc:
+        raise UnknownDecisionError(f"Unknown decision: {decision!r}") from exc
 
 
 class GatewayStore:
@@ -733,13 +746,6 @@ class GatewayStore:
             created_at=row["created_at"],
         )
 
-    def count_decisions(self, tenant_id: str, case_id: str) -> int:
-        row = self._connection.execute(
-            "SELECT COUNT(*) AS count FROM decisions WHERE tenant_id = ? AND case_id = ?",
-            (tenant_id, case_id),
-        ).fetchone()
-        return int(row["count"])
-
     def latest_crm_stage(self, tenant_id: str, case_id: str) -> CrmStageRecord | None:
         row = self._connection.execute(
             """
@@ -760,13 +766,6 @@ class GatewayStore:
             created_at=row["created_at"],
         )
 
-    def count_crm_stages(self, tenant_id: str, case_id: str) -> int:
-        row = self._connection.execute(
-            "SELECT COUNT(*) AS count FROM crm_stages WHERE tenant_id = ? AND case_id = ?",
-            (tenant_id, case_id),
-        ).fetchone()
-        return int(row["count"])
-
     def get_idempotency(
         self, tenant_id: str, principal: str, tool: str, key: str
     ) -> IdempotencyRecord | None:
@@ -785,7 +784,7 @@ class GatewayStore:
             tool=row["tool"],
             key=row["key"],
             args_hash=row["args_hash"],
-            result=json.loads(row["result_json"]),
+            result=DecisionRecord.model_validate_json(row["result_json"]),
             created_at=row["created_at"],
         )
 
@@ -803,16 +802,9 @@ class GatewayStore:
         self,
         *,
         tenant_id: str,
-        case_id: str,
-        decision: Decision,
-        rationale: str,
-        conditions: list[str],
+        request: CreateDecisionInput,
+        claims: ApprovalClaims,
         principal: str,
-        approver: str,
-        approval_jti: str,
-        approval_expires_at: str,
-        payload_hash: str,
-        idempotency_key: str,
         input_hash: str,
     ) -> DecisionRecord:
         """Write decision, CRM stage, approval use, idempotency and audit atomically.
@@ -824,39 +816,58 @@ class GatewayStore:
         """
 
         now = _now()
+        payload_hash = claims.payload_hash
         with self._lock, self._connection:
             row = self._connection.execute(
                 """
                 SELECT args_hash, result_json FROM idempotency
                 WHERE tenant_id = ? AND principal = ? AND tool = ? AND key = ?
                 """,
-                (tenant_id, principal, "create_decision", idempotency_key),
+                (tenant_id, principal, "create_decision", request.idempotency_key),
             ).fetchone()
             if row is not None:
                 if row["args_hash"] != payload_hash:
                     raise IdempotencyConflictError(
                         "This idempotency key was already used with different arguments."
                     )
-                stored = DecisionRecord.model_validate_json(row["result_json"])
-                return stored.model_copy(update={"replayed": True})
+                stored = DecisionRecord.model_validate_json(row["result_json"]).model_copy(
+                    update={"replayed": True}
+                )
+                self._insert_audit(
+                    tenant_id=tenant_id,
+                    case_id=request.case_id,
+                    tool="create_decision",
+                    event="idempotent_replay",
+                    outcome="ok",
+                    principal=principal,
+                    input_hash=input_hash,
+                    output_hash=canonical_hash(stored),
+                    detail={
+                        "decision_id": stored.decision_id,
+                        "idempotency_key": request.idempotency_key,
+                        "source": "transaction",
+                    },
+                )
+                return stored
 
             used = self._connection.execute(
                 """
                 SELECT 1 FROM approvals
                 WHERE tenant_id = ? AND jti = ? AND used_at IS NOT NULL
                 """,
-                (tenant_id, approval_jti),
+                (tenant_id, claims.jti),
             ).fetchone()
             if used is not None:
                 raise ApprovalReusedError("This approval token has already been used.")
 
+            outcome = decision_outcome(request.decision)
             record = DecisionRecord(
                 decision_id=f"dec_{uuid.uuid4().hex[:12]}",
-                case_id=case_id,
-                decision=decision,
-                rationale=rationale,
-                conditions=conditions,
-                approver=approver,
+                case_id=request.case_id,
+                decision=request.decision,
+                rationale=request.rationale,
+                conditions=request.conditions,
+                approver=claims.sub,
                 principal=principal,
                 created_at=now,
             )
@@ -864,11 +875,11 @@ class GatewayStore:
             approval_record = ApprovalRecord(
                 tenant_id=tenant_id,
                 approval_id=f"apr_{uuid.uuid4().hex[:12]}",
-                case_id=case_id,
-                jti=approval_jti,
-                approver=approver,
+                case_id=request.case_id,
+                jti=claims.jti,
+                approver=claims.sub,
                 payload_hash=payload_hash,
-                expires_at=approval_expires_at,
+                expires_at=datetime.fromtimestamp(claims.exp, UTC).isoformat(timespec="seconds"),
                 used_at=now,
                 created_at=now,
             )
@@ -876,13 +887,11 @@ class GatewayStore:
                 tenant_id=tenant_id,
                 principal=principal,
                 tool="create_decision",
-                key=idempotency_key,
+                key=request.idempotency_key,
                 args_hash=payload_hash,
-                result=record.model_dump(mode="json"),
+                result=record,
                 created_at=now,
             )
-            crm_stage = CRM_STAGE_BY_DECISION[decision]
-            case_status = CASE_STATUS_BY_DECISION[decision]
 
             self._connection.execute(
                 """
@@ -894,15 +903,15 @@ class GatewayStore:
                 """,
                 (
                     tenant_id,
-                    case_id,
+                    request.case_id,
                     record.decision_id,
-                    decision,
-                    rationale,
-                    json.dumps(conditions, sort_keys=True),
-                    approver,
+                    request.decision,
+                    request.rationale,
+                    json.dumps(request.conditions, sort_keys=True),
+                    claims.sub,
                     principal,
-                    approval_jti,
-                    idempotency_key,
+                    claims.jti,
+                    request.idempotency_key,
                     now,
                 ),
             )
@@ -933,9 +942,9 @@ class GatewayStore:
                 """,
                 (
                     tenant_id,
-                    case_id,
+                    request.case_id,
                     f"crm_{uuid.uuid4().hex[:12]}",
-                    crm_stage,
+                    outcome.crm_stage,
                     record.decision_id,
                     now,
                 ),
@@ -945,7 +954,7 @@ class GatewayStore:
                 UPDATE cases SET status = ?
                 WHERE tenant_id = ? AND case_id = ?
                 """,
-                (case_status, tenant_id, case_id),
+                (outcome.case_status, tenant_id, request.case_id),
             )
             self._connection.execute(
                 """
@@ -963,38 +972,66 @@ class GatewayStore:
                     idempotency_record.created_at,
                 ),
             )
-            self._connection.execute(
-                """
-                INSERT INTO audit (
-                    tenant_id, case_id, tool, event, outcome, principal,
-                    input_hash, output_hash, detail_json, created_at
-                ) VALUES (?, ?, 'create_decision', 'write_committed', 'ok', ?, ?, ?, ?, ?)
-                """,
-                (
-                    tenant_id,
-                    case_id,
-                    principal,
-                    input_hash,
-                    _canonical_hash(record.model_dump(mode="json")),
-                    json.dumps(
-                        {
-                            "decision_id": record.decision_id,
-                            "decision": decision,
-                            "crm_stage": crm_stage,
-                            "case_status": case_status,
-                            "approver": approver,
-                            "jti": approval_jti,
-                            "idempotency_key": idempotency_key,
-                            "payload_hash": payload_hash,
-                        },
-                        sort_keys=True,
-                    ),
-                    now,
-                ),
+            self._insert_audit(
+                tenant_id=tenant_id,
+                case_id=request.case_id,
+                tool="create_decision",
+                event="write_committed",
+                outcome="ok",
+                principal=principal,
+                input_hash=input_hash,
+                output_hash=canonical_hash(record),
+                detail={
+                    "decision_id": record.decision_id,
+                    "decision": request.decision,
+                    "crm_stage": outcome.crm_stage,
+                    "case_status": outcome.case_status,
+                    "approver": claims.sub,
+                    "jti": claims.jti,
+                    "idempotency_key": request.idempotency_key,
+                    "payload_hash": payload_hash,
+                },
             )
         return record
 
     # -- audit -----------------------------------------------------------
+
+    def _insert_audit(
+        self,
+        *,
+        tenant_id: str,
+        case_id: str | None,
+        tool: str,
+        event: AuditEventType,
+        outcome: AuditOutcome,
+        principal: str,
+        input_hash: str | None = None,
+        output_hash: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> int:
+        """Insert one audit row without opening a transaction of its own."""
+
+        cursor = self._connection.execute(
+            """
+            INSERT INTO audit (
+                tenant_id, case_id, tool, event, outcome, principal,
+                input_hash, output_hash, detail_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tenant_id,
+                case_id,
+                tool,
+                event,
+                outcome,
+                principal,
+                input_hash,
+                output_hash,
+                json.dumps(detail or {}, sort_keys=True),
+                _now(),
+            ),
+        )
+        return int(cursor.lastrowid)
 
     def append_audit(
         self,
@@ -1010,27 +1047,17 @@ class GatewayStore:
         detail: dict[str, Any] | None = None,
     ) -> int:
         with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """
-                INSERT INTO audit (
-                    tenant_id, case_id, tool, event, outcome, principal,
-                    input_hash, output_hash, detail_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    tenant_id,
-                    case_id,
-                    tool,
-                    event,
-                    outcome,
-                    principal,
-                    input_hash,
-                    output_hash,
-                    json.dumps(detail or {}, sort_keys=True),
-                    _now(),
-                ),
+            return self._insert_audit(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                tool=tool,
+                event=event,
+                outcome=outcome,
+                principal=principal,
+                input_hash=input_hash,
+                output_hash=output_hash,
+                detail=detail,
             )
-            return int(cursor.lastrowid)
 
     def list_audit(self, tenant_id: str, case_id: str, *, limit: int = 100) -> list[AuditEvent]:
         rows = self._connection.execute(

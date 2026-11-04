@@ -12,6 +12,7 @@ from typing import Any
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
+from ..corpus.vocab import Decision
 from .approval import ApprovalTokenIssuer
 
 DEFAULT_RATIONALE = "Synthetic Ridgeline packet is clean; approve onboarding."
@@ -38,7 +39,7 @@ async def run_write_demo(
     expected: list[str] = []
     approvals: dict[str, str] = {}
 
-    def token(name: str, *, decision: str, rationale: str, ttl: int, jti: str) -> str:
+    def token(name: str, *, decision: Decision, rationale: str, ttl: int, jti: str) -> str:
         if name not in approvals:
             approvals[name] = approval.issue_for_decision(
                 approver=approver,
@@ -53,7 +54,7 @@ async def run_write_demo(
         return approvals[name]
 
     def arguments(
-        *, rationale: str, approval_token: str, key: str, decision: str = "approve"
+        *, rationale: str, approval_token: str, key: str, decision: Decision = "approve"
     ) -> dict[str, Any]:
         return {
             "case_id": case_id,

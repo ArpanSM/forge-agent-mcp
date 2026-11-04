@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
+import jwt
+import pytest
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
 from forge_agent_mcp.corpus.vocab import Decision
+from forge_agent_mcp.gateway.approval import CONSOLE_ISSUER, decision_payload_hash
 from forge_agent_mcp.gateway.write_demo import run_write_demo
 from tests.conftest import APPROVER, TENANT
 
@@ -31,15 +35,18 @@ def _decision_call(
     approval_token: str = "",
     idempotency_key: str = "idem-1",
     case_id: str = CASE_ID,
+    include_token: bool = True,
 ) -> dict[str, Any]:
-    return {
+    arguments: dict[str, Any] = {
         "case_id": case_id,
         "decision": decision,
         "rationale": rationale,
         "conditions": conditions or [],
-        "approval_token": approval_token,
         "idempotency_key": idempotency_key,
     }
+    if include_token:
+        arguments["approval_token"] = approval_token
+    return arguments
 
 
 def _approval(
@@ -72,8 +79,16 @@ def _approver_token(gateway) -> str:
     )
 
 
+def _commits(gateway) -> list[Any]:
+    return [
+        event
+        for event in gateway.store.list_audit(TENANT, CASE_ID)
+        if event.event == "write_committed"
+    ]
+
+
 def _decisions(gateway) -> int:
-    return gateway.store.count_decisions(TENANT, CASE_ID)
+    return len(_commits(gateway))
 
 
 def _denied(gateway) -> list[Any]:
@@ -94,7 +109,7 @@ def test_missing_approval_is_refused_with_only_an_audit_row(gateway) -> None:
     assert result.structured_content["error_code"] == "approval_required"
     assert result.structured_content["data"] is None
     assert _decisions(gateway) == 0
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 0
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is None
     assert gateway.store.get_idempotency(TENANT, PRINCIPAL, "create_decision", "idem-1") is None
 
     denied = _denied(gateway)
@@ -121,6 +136,85 @@ def test_malformed_approval_is_refused_with_only_an_audit_row(gateway) -> None:
     assert denied[-1].detail["error_code"] == "approval_malformed"
 
 
+def test_omitted_empty_and_forged_approvals_are_refused_with_audit(gateway) -> None:
+    token = _approver_token(gateway)
+    cases = [
+        (_decision_call(include_token=False, idempotency_key="idem-omitted"), "approval_required"),
+        (_decision_call(approval_token="", idempotency_key="idem-empty"), "approval_required"),
+        (
+            _decision_call(approval_token="not-a-real-token", idempotency_key="idem-forged"),
+            "approval_malformed",
+        ),
+    ]
+
+    async def scenario():
+        results = []
+        async with _client(gateway, token) as client:
+            for arguments, _ in cases:
+                results.append(await client.call_tool_mcp("create_decision", arguments))
+        return results
+
+    results = asyncio.run(scenario())
+
+    for result, (_, expected_code) in zip(results, cases, strict=True):
+        assert result.is_error is True
+        assert result.structured_content["ok"] is False
+        assert result.structured_content["error_code"] == expected_code
+        assert result.structured_content["data"] is None
+    assert _decisions(gateway) == 0
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is None
+    assert [event.detail["error_code"] for event in _denied(gateway)] == [
+        "approval_required",
+        "approval_required",
+        "approval_malformed",
+    ]
+
+
+def test_signed_token_with_a_blank_approver_returns_a_clean_envelope(gateway) -> None:
+    payload_hash = decision_payload_hash(
+        case_id=CASE_ID,
+        decision="approve",
+        rationale="Clean packet.",
+        conditions=[],
+    )
+    token = jwt.encode(
+        {
+            "iss": CONSOLE_ISSUER,
+            "aud": gateway.approval.audience,
+            "sub": "   ",
+            "tid": TENANT,
+            "case_id": CASE_ID,
+            "decision": "approve",
+            "payload_hash": payload_hash,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 600,
+            "jti": "jti-blank-approver",
+        },
+        gateway.approval.secret,
+        algorithm="HS256",
+    )
+
+    result = asyncio.run(
+        _call(
+            gateway,
+            _approver_token(gateway),
+            "create_decision",
+            _decision_call(approval_token=token, idempotency_key="idem-blank-approver"),
+        )
+    )
+
+    assert result.is_error is True
+    assert result.structured_content["ok"] is False
+    assert result.structured_content["error_code"] == "approval_malformed"
+    assert result.structured_content["data"] is None
+    assert _decisions(gateway) == 0
+    assert _denied(gateway)[-1].detail["error_code"] == "approval_malformed"
+    assert (
+        gateway.store.get_idempotency(TENANT, PRINCIPAL, "create_decision", "idem-blank-approver")
+        is None
+    )
+
+
 def test_expired_approval_is_refused_with_only_an_audit_row(gateway) -> None:
     result = asyncio.run(
         _call(
@@ -134,7 +228,7 @@ def test_expired_approval_is_refused_with_only_an_audit_row(gateway) -> None:
     assert result.is_error is True
     assert result.structured_content["error_code"] == "approval_expired"
     assert _decisions(gateway) == 0
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 0
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is None
     assert _denied(gateway)[-1].detail["error_code"] == "approval_expired"
 
 
@@ -163,7 +257,7 @@ def test_approval_bound_to_another_case_decision_or_payload_is_refused(gateway) 
         assert result.structured_content["error_code"] == "approval_mismatch"
         assert result.structured_content["data"] is None
     assert _decisions(gateway) == 0
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 0
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is None
     assert [event.detail["error_code"] for event in _denied(gateway)] == [
         "approval_mismatch",
         "approval_mismatch",
@@ -192,7 +286,7 @@ def test_valid_approval_commits_one_decision_crm_stage_and_audit_chain(gateway) 
     assert data["decision_id"].startswith("dec_")
 
     assert _decisions(gateway) == 1
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 1
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is not None
     case = gateway.store.get_case(TENANT, CASE_ID)
     stage = gateway.store.latest_crm_stage(TENANT, CASE_ID)
     assert case is not None and case.status == "approved"
@@ -211,6 +305,53 @@ def test_valid_approval_commits_one_decision_crm_stage_and_audit_chain(gateway) 
     assert committed[0].output_hash
     assert committed[0].detail["decision_id"] == data["decision_id"]
     assert committed[0].detail["approver"] == APPROVER
+
+
+@pytest.mark.parametrize(
+    ("decision", "case_status", "crm_stage"),
+    [
+        ("approve", "approved", "approved"),
+        ("conditional_approve", "approved", "conditionally_approved"),
+        ("decline", "declined", "declined"),
+        ("request_documents", "awaiting_documents", "awaiting_documents"),
+    ],
+)
+def test_each_decision_type_commits_through_the_tool(
+    gateway, decision: Decision, case_status: str, crm_stage: str
+) -> None:
+    result = asyncio.run(
+        _call(
+            gateway,
+            _approver_token(gateway),
+            "create_decision",
+            _decision_call(
+                decision=decision,
+                approval_token=_approval(gateway, decision=decision),
+            ),
+        )
+    )
+
+    assert result.is_error is False
+    assert result.structured_content["data"]["decision"] == decision
+    assert result.structured_content["data"]["replayed"] is False
+
+    case = gateway.store.get_case(TENANT, CASE_ID)
+    stage = gateway.store.latest_crm_stage(TENANT, CASE_ID)
+    stored = gateway.store.latest_decision(TENANT, CASE_ID)
+    assert case is not None
+    assert case.status == case_status
+    assert stage is not None
+    assert stage.stage == crm_stage
+    assert stored is not None
+    assert stored.decision == decision
+
+    if decision == "request_documents":
+        assert stored.decision != "approve"
+        assert case.status != "approved"
+        assert stage.stage != "approved"
+    assert len(_commits(gateway)) == 1
+    assert _commits(gateway)[0].detail["decision"] == decision
+    assert _commits(gateway)[0].detail["crm_stage"] == crm_stage
 
 
 def test_same_key_and_args_replays_the_stored_result_without_a_second_decision(gateway) -> None:
@@ -238,7 +379,7 @@ def test_same_key_and_args_replays_the_stored_result_without_a_second_decision(g
         == (first.structured_content["data"]["decision_id"])
     )
     assert _decisions(gateway) == 1
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 1
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is not None
 
     replays = [
         event
@@ -271,7 +412,7 @@ def test_same_key_with_changed_args_returns_idempotency_conflict(gateway) -> Non
     assert conflict.structured_content["error_code"] == "idempotency_conflict"
     assert conflict.structured_content["data"] is None
     assert _decisions(gateway) == 1
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 1
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is not None
     conflicts = [
         event
         for event in gateway.store.list_audit(TENANT, CASE_ID)
@@ -303,7 +444,7 @@ def test_a_denied_approval_can_be_retried_with_a_fresh_token(gateway) -> None:
     assert committed.is_error is False
     assert committed.structured_content["data"]["replayed"] is False
     assert _decisions(gateway) == 1
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 1
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is not None
 
 
 def test_a_used_approval_token_is_rejected_for_a_new_idempotency_key(gateway) -> None:
@@ -326,7 +467,7 @@ def test_a_used_approval_token_is_rejected_for_a_new_idempotency_key(gateway) ->
     assert reused.is_error is True
     assert reused.structured_content["error_code"] == "approval_reused"
     assert _decisions(gateway) == 1
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 1
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is not None
     assert gateway.store.get_idempotency(TENANT, PRINCIPAL, "create_decision", "idem-2") is None
     assert _denied(gateway)[-1].detail["error_code"] == "approval_reused"
 
@@ -404,4 +545,4 @@ def test_write_demo_shows_every_path_and_exits_zero(gateway, capsys) -> None:
     ):
         assert expected in output
     assert _decisions(gateway) == 1
-    assert gateway.store.count_crm_stages(TENANT, CASE_ID) == 1
+    assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is not None

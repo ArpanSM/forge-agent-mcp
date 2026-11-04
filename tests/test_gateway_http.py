@@ -106,7 +106,6 @@ def test_tools_list_is_deterministic_typed_and_annotated(gateway) -> None:
         "decision",
         "rationale",
         "conditions",
-        "approval_token",
         "idempotency_key",
     ]
     assert decision.annotations.destructive_hint is True
