@@ -10,16 +10,12 @@ import httpx
 from .base import (
     ChatMessage,
     Completion,
-    ProviderError,
+    ProviderSchemaError,
+    ProviderTransportError,
     ProviderUnavailable,
     StructuredModel,
     message_dicts,
 )
-
-
-def _truncate(value: str, limit: int = 300) -> str:
-    value = value.strip()
-    return value if len(value) <= limit else f"{value[:limit]}..."
 
 
 def _content_text(content: Any) -> str:
@@ -30,6 +26,10 @@ def _content_text(content: Any) -> str:
             part.get("text", "") if isinstance(part, dict) else str(part) for part in content
         )
     return ""
+
+
+def _reason(response: httpx.Response) -> str:
+    return response.reason_phrase or "upstream error"
 
 
 def _strip_fence(text: str) -> str:
@@ -105,9 +105,8 @@ class OpenAICompatibleProvider:
         try:
             return schema.model_validate_json(text)
         except ValueError as exc:
-            raise ProviderError(
-                f"{self.name}: structured output did not match {schema.__name__}: "
-                f"{_truncate(str(exc))}"
+            raise ProviderSchemaError(
+                f"{self.name}: structured output did not match {schema.__name__}"
             ) from exc
 
     def _payload(
@@ -146,15 +145,15 @@ class OpenAICompatibleProvider:
             response = self._request(payload)
 
         if response.status_code >= 400:
-            raise ProviderError(
-                f"{self.name}: HTTP {response.status_code}: {_truncate(response.text)}"
+            raise ProviderTransportError(
+                f"{self.name}: HTTP {response.status_code}: {_reason(response)}"
             )
         try:
             body = response.json()
         except ValueError as exc:
-            raise ProviderError(f"{self.name}: response was not JSON") from exc
+            raise ProviderTransportError(f"{self.name}: response was not JSON") from exc
         if not isinstance(body, dict):
-            raise ProviderError(f"{self.name}: response was not a JSON object")
+            raise ProviderTransportError(f"{self.name}: response was not a JSON object")
         return body
 
     def _request(self, payload: dict[str, Any]) -> httpx.Response:
@@ -167,7 +166,9 @@ class OpenAICompatibleProvider:
         try:
             return client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
         except httpx.HTTPError as exc:
-            raise ProviderError(f"{self.name}: request failed: {type(exc).__name__}") from exc
+            raise ProviderTransportError(
+                f"{self.name}: request failed: {type(exc).__name__}"
+            ) from exc
         finally:
             if owns_client:
                 client.close()
@@ -175,10 +176,10 @@ class OpenAICompatibleProvider:
     def _extract_content(self, body: dict[str, Any]) -> str:
         choices = body.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise ProviderError(f"{self.name}: response contained no choices")
+            raise ProviderTransportError(f"{self.name}: response contained no choices")
         first = choices[0]
         message = first.get("message") if isinstance(first, dict) else None
         content = _content_text(message.get("content") if isinstance(message, dict) else None)
         if not content.strip():
-            raise ProviderError(f"{self.name}: completion was empty")
+            raise ProviderTransportError(f"{self.name}: completion was empty")
         return content

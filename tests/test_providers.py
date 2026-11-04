@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 import pytest
@@ -15,6 +16,8 @@ from forge_agent_mcp.providers import (
     FallbackProvider,
     OpenAICompatibleProvider,
     ProviderError,
+    ProviderSchemaError,
+    ProviderTransportError,
     build_provider,
 )
 
@@ -176,7 +179,7 @@ def test_openai_compatible_provider_strips_markdown_fence() -> None:
     assert result.ein == "00-0000001"
 
 
-def test_openai_compatible_provider_raises_provider_error_on_http_failure() -> None:
+def test_openai_compatible_provider_raises_transport_error_on_http_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, text="slow down")
 
@@ -188,11 +191,34 @@ def test_openai_compatible_provider_raises_provider_error_on_http_failure() -> N
         http_client=_client(handler),
     )
 
-    with pytest.raises(ProviderError, match="HTTP 429"):
+    with pytest.raises(ProviderTransportError, match="HTTP 429"):
         provider.complete([ChatMessage(role="user", content="hello")])
 
 
-def test_openai_compatible_provider_raises_provider_error_on_malformed_json() -> None:
+def test_provider_error_redacts_upstream_body() -> None:
+    secret = "sk-upstream-secret-that-must-not-leak"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text=f"token={secret}")
+
+    provider = OpenAICompatibleProvider(
+        name="orcarouter",
+        base_url="https://api.example.test/v1",
+        model="test-model",
+        api_key="test-key",
+        http_client=_client(handler),
+    )
+
+    with pytest.raises(ProviderTransportError) as exc_info:
+        provider.complete([ChatMessage(role="user", content="hello")])
+
+    message = str(exc_info.value)
+    assert "HTTP 401" in message
+    assert "Unauthorized" in message
+    assert secret not in message
+
+
+def test_openai_compatible_provider_raises_schema_error_on_malformed_json() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_completion_body("not json at all"))
 
@@ -204,14 +230,33 @@ def test_openai_compatible_provider_raises_provider_error_on_malformed_json() ->
         http_client=_client(handler),
     )
 
-    with pytest.raises(ProviderError, match="structured output"):
+    with pytest.raises(ProviderSchemaError, match="structured output"):
         provider.complete_structured([ChatMessage(role="user", content="extract")], ExtractResult)
 
 
-def test_fallback_provider_uses_secondary_after_primary_failure() -> None:
+def test_two_schema_failures_stay_schema_failures() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_completion_body("not json at all"))
+
+    provider = OpenAICompatibleProvider(
+        name="lfm3",
+        base_url="http://127.0.0.1:8080/v1",
+        model="lfm3-1.7b",
+        require_api_key=False,
+        http_client=_client(handler),
+    )
+
+    for _ in range(2):
+        with pytest.raises(ProviderSchemaError):
+            provider.complete_structured(
+                [ChatMessage(role="user", content="extract")], ExtractResult
+            )
+
+
+def test_fallback_provider_uses_secondary_after_transport_failure() -> None:
     class Broken(FakeProvider):
         def complete(self, messages, **kwargs):  # type: ignore[no-untyped-def]
-            raise ProviderError("primary down")
+            raise ProviderTransportError("primary down")
 
     provider = FallbackProvider(primary=Broken(), fallback=FakeProvider(text="from fallback"))
 
@@ -221,10 +266,34 @@ def test_fallback_provider_uses_secondary_after_primary_failure() -> None:
     assert result.provider == "fake"
 
 
+def test_fallback_provider_does_not_mask_schema_failures() -> None:
+    class SchemaBroken(FakeProvider):
+        def complete_structured(self, messages, schema, **kwargs):  # type: ignore[no-untyped-def]
+            raise ProviderSchemaError("schema mismatch")
+
+    fallback = FakeProvider()
+    fallback.queue_structured({"legal_name": "Fallback", "ein": "00-0000001"})
+    provider = FallbackProvider(primary=SchemaBroken(), fallback=fallback)
+
+    with pytest.raises(ProviderSchemaError, match="schema mismatch"):
+        provider.complete_structured([ChatMessage(role="user", content="extract")], ExtractResult)
+
+
+def test_fallback_provider_does_not_retry_generic_business_errors() -> None:
+    class BusinessBroken(FakeProvider):
+        def complete(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+            raise ProviderError("business error")
+
+    provider = FallbackProvider(primary=BusinessBroken(), fallback=FakeProvider(text="fallback"))
+
+    with pytest.raises(ProviderError, match="business error"):
+        provider.complete([ChatMessage(role="user", content="hello")])
+
+
 def test_fallback_provider_reports_when_every_provider_fails() -> None:
     class Broken(FakeProvider):
         def complete(self, messages, **kwargs):  # type: ignore[no-untyped-def]
-            raise ProviderError("down")
+            raise ProviderTransportError("down")
 
     provider = FallbackProvider(primary=Broken(), fallback=Broken())
 
@@ -239,7 +308,20 @@ def test_build_provider_defaults_to_fake_offline() -> None:
     assert provider.complete([ChatMessage(role="user", content="hello")]).text
 
 
-def test_build_provider_requires_orcarouter_key() -> None:
+def test_build_provider_lfm3_works_without_orcarouter_key() -> None:
+    settings = Settings(
+        model_provider="lfm3",
+        orcarouter_api_key=None,
+        _env_file=None,
+    )
+
+    provider = build_provider(settings)
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.name == "lfm3"
+
+
+def test_build_provider_orcarouter_without_key_falls_back_to_lfm3() -> None:
     settings = Settings(
         model_provider="orcarouter",
         orcarouter_api_key=None,
@@ -247,8 +329,19 @@ def test_build_provider_requires_orcarouter_key() -> None:
         _env_file=None,
     )
 
-    with pytest.raises(ProviderError, match="ORCAROUTER_API_KEY"):
-        build_provider(settings)
+    provider = build_provider(settings)
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.name == "lfm3"
+
+
+def test_env_example_is_offline_friendly() -> None:
+    env_path = Path(__file__).resolve().parents[1] / ".env.example"
+    settings = Settings(_env_file=env_path)
+    provider = build_provider(settings)
+
+    assert settings.model_provider == "fake"
+    assert isinstance(provider, FakeProvider)
 
 
 def test_settings_read_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -19,8 +19,20 @@ class ProviderUnavailable(ProviderError):
     """A provider is not configured (for example, its API key is missing)."""
 
 
+class ProviderTransportError(ProviderError):
+    """A provider is unavailable, timed out or returned a non-JSON response."""
+
+
+class ProviderSchemaError(ProviderError):
+    """The provider returned JSON that did not match the requested schema.
+
+    Extraction retries a schema failure once; a second failure becomes
+    ``needs_more_info``. It must never trigger a silent provider fallback.
+    """
+
+
 class AllProvidersFailed(ProviderError):
-    """Every provider in a fallback chain failed."""
+    """Every provider in a fallback chain failed with a transport error."""
 
 
 @dataclass(frozen=True)

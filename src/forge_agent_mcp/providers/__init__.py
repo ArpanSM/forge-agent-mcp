@@ -11,15 +11,38 @@ from .base import (
     ChatProvider,
     Completion,
     ProviderError,
+    ProviderSchemaError,
+    ProviderTransportError,
     ProviderUnavailable,
     StructuredModel,
 )
 from .fake import FakeProvider
 from .openai_compat import OpenAICompatibleProvider
 
+__all__ = [
+    "AllProvidersFailed",
+    "ChatMessage",
+    "ChatProvider",
+    "Completion",
+    "FakeProvider",
+    "FallbackProvider",
+    "OpenAICompatibleProvider",
+    "ProviderError",
+    "ProviderSchemaError",
+    "ProviderTransportError",
+    "ProviderUnavailable",
+    "build_provider",
+]
+
+FALLBACK_ERRORS = (ProviderUnavailable, ProviderTransportError)
+
 
 class FallbackProvider:
-    """Tries the primary provider, then the fallback on any provider failure."""
+    """Tries the fallback only when the primary is unavailable or unreachable.
+
+    Structured-schema failures are not retried on another provider; they bubble
+    up so extraction can retry once and then return ``needs_more_info``.
+    """
 
     name = "fallback"
 
@@ -39,7 +62,7 @@ class FallbackProvider:
         for provider in (self.primary, self.fallback):
             try:
                 return provider.complete(messages, temperature=temperature, max_tokens=max_tokens)
-            except ProviderError as exc:
+            except FALLBACK_ERRORS as exc:
                 errors.append(f"{provider.name}: {exc}")
         raise AllProvidersFailed("all providers failed: " + "; ".join(errors))
 
@@ -57,7 +80,7 @@ class FallbackProvider:
                 return provider.complete_structured(
                     messages, schema, temperature=temperature, max_tokens=max_tokens
                 )
-            except ProviderError as exc:
+            except FALLBACK_ERRORS as exc:
                 errors.append(f"{provider.name}: {exc}")
         raise AllProvidersFailed("all providers failed: " + "; ".join(errors))
 
@@ -95,5 +118,8 @@ def build_provider(settings: Settings | None = None) -> ChatProvider:
     if settings.model_provider == "fake":
         return FakeProvider()
     if settings.model_provider == "lfm3":
+        return _lfm3(settings)
+    if not _secret(settings.orcarouter_api_key):
+        # A missing hosted key is an offline setup, not a startup failure.
         return _lfm3(settings)
     return FallbackProvider(primary=_orcarouter(settings), fallback=_lfm3(settings))
