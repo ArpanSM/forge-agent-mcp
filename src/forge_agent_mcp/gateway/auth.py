@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import jwt
@@ -36,7 +36,7 @@ TOOL_SCOPES: dict[str, str] = {
 class LocalTokenIssuer:
     """Mint HS256 bearer tokens for local demos and tests."""
 
-    secret: str
+    secret: str = field(repr=False)
     issuer: str
     audience: str
     default_ttl_seconds: int = 3600

@@ -29,18 +29,23 @@ class Gateway:
     mcp: FastMCP
     tool_scopes: dict[str, str]
 
+    def _gate(self) -> Middleware:
+        return Middleware(
+            GatewayGate,
+            store=self.store,
+            verifier=self.verifier,
+            tool_scopes=self.tool_scopes,
+        )
+
+    @property
+    def app(self) -> Any:
+        return self.http_app()
+
     def http_app(self, path: str = "/mcp", *, stateless_http: bool = True) -> Any:
         return self.mcp.http_app(
             path=path,
             stateless_http=stateless_http,
-            middleware=[
-                Middleware(
-                    GatewayGate,
-                    store=self.store,
-                    verifier=self.verifier,
-                    tool_scopes=self.tool_scopes,
-                )
-            ],
+            middleware=[self._gate()],
         )
 
     def run(
@@ -55,32 +60,23 @@ class Gateway:
         transport_kwargs.setdefault("path", "/mcp")
         transport_kwargs.setdefault("stateless_http", True)
         transport_kwargs.setdefault("show_banner", False)
-        transport_kwargs.setdefault(
-            "middleware",
-            [
-                Middleware(
-                    GatewayGate,
-                    store=self.store,
-                    verifier=self.verifier,
-                    tool_scopes=self.tool_scopes,
-                )
-            ],
-        )
+        extra_middleware = transport_kwargs.pop("middleware", [])
+        transport_kwargs["middleware"] = [self._gate(), *extra_middleware]
         self.mcp.run(transport="http", **transport_kwargs)
 
 
 def create_gateway(
     store: GatewayStore,
-    issuer: LocalTokenIssuer,
+    auth: LocalTokenIssuer,
     *,
     tool_scopes: dict[str, str] | None = None,
 ) -> Gateway:
     """Build the gateway and register the eight tools in a stable order."""
 
     verifier = build_verifier(
-        secret=issuer.secret,
-        issuer=issuer.issuer,
-        audience=issuer.audience,
+        secret=auth.secret,
+        issuer=auth.issuer,
+        audience=auth.audience,
     )
     mcp = FastMCP(
         name="Forge Freight Gateway",
@@ -94,7 +90,7 @@ def create_gateway(
     register_tools(mcp, store)
     return Gateway(
         store=store,
-        issuer=issuer,
+        issuer=auth,
         verifier=verifier,
         mcp=mcp,
         tool_scopes=dict(tool_scopes or TOOL_SCOPES),
