@@ -96,6 +96,19 @@ def test_validator_rejects_an_uncovered_hard_stop_archetype() -> None:
         validate_manifest(raw)
 
 
+def test_validator_rejects_a_required_hard_stop_archetype_with_no_case() -> None:
+    raw = _raw_manifest()
+    case = _case(raw, "case_onb_harborline")
+    case["archetypes"] = ["identity_mismatch"]
+    case["expected_flags"] = ["identity_mismatch"]
+    case["expected_recommendation"] = "decline"
+    case["expected_decision"] = "decline"
+    case["expected_conditions"] = []
+
+    with pytest.raises(ManifestError, match="watchlist_hit.*not covered"):
+        validate_manifest(raw)
+
+
 def test_validator_rejects_an_eval_distribution_that_does_not_match_cases() -> None:
     raw = _raw_manifest()
     raw["eval_distribution"]["onboarding"]["clean"] = 3

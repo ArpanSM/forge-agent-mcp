@@ -251,3 +251,15 @@ def test_build_provider_requires_orcarouter_key() -> None:
 
     with pytest.raises(ProviderError, match="ORCAROUTER_API_KEY"):
         build_provider(settings)
+
+
+def test_settings_read_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", "lfm3")
+    monkeypatch.setenv("LFM3_BASE_URL", "http://127.0.0.1:9999/v1")
+    monkeypatch.setenv("LFM3_MODEL", "test-lfm3")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.model_provider == "lfm3"
+    assert settings.lfm3_base_url == "http://127.0.0.1:9999/v1"
+    assert settings.lfm3_model == "test-lfm3"
