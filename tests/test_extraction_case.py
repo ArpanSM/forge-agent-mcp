@@ -1,32 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 from forge_agent_mcp.extraction.citations import verify_citation
-from forge_agent_mcp.extraction.extractor import ExtractionError, extract_case
+from forge_agent_mcp.extraction.extractor import extract_case
 from forge_agent_mcp.extraction.models import CaseExtraction
 from forge_agent_mcp.providers.fake import FakeProvider
 
 
-def _provider_payload(truth, document) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for field in truth.expected_fields:
-        document_type, key = field.field.split(".", 1)
-        if document_type != document.document_type:
-            continue
-        payload[key] = {
-            "value": field.value,
-            "citation": {
-                "document_id": field.citation.document_id,
-                "page": field.citation.page,
-                "bbox": field.citation.bbox,
-                "quote": field.value,
-            },
-        }
-    return payload
+def successful_report(result) -> CaseExtraction:
+    assert result.ok is True, result.message
+    assert result.error_code is None
+    assert result.data is not None
+    return result.data
 
 
 def test_extract_case_classifies_documents_and_keeps_citations(generated_corpus) -> None:
@@ -34,7 +20,7 @@ def test_extract_case_classifies_documents_and_keeps_citations(generated_corpus)
     case_id = "case_onb_ridgeline"
     truth = result.cases[case_id]
 
-    report = extract_case(case_id, result.root)
+    report = successful_report(extract_case(case_id, result.root))
 
     assert report.case_id == case_id
     assert report.case_type == "onboarding"
@@ -47,6 +33,7 @@ def test_extract_case_classifies_documents_and_keeps_citations(generated_corpus)
 
     for document in report.documents:
         assert document.status == "extracted"
+        assert document.fallback_used is False
         assert document.fields
         path = result.root / "cases" / case_id / document.classification.filename
         for value in document.fields.values():
@@ -59,54 +46,63 @@ def test_extract_case_classifies_documents_and_keeps_citations(generated_corpus)
 def test_extract_case_reports_missing_packet_documents_without_failing(generated_corpus) -> None:
     _manifest, result = generated_corpus
 
-    report = extract_case("case_inv_sagebrush", result.root)
+    report = successful_report(extract_case("case_inv_sagebrush", result.root))
 
     assert report.status == "extracted"
     assert report.missing_documents == ["proof_of_delivery"]
     assert all(document.status == "extracted" for document in report.documents)
 
 
-def test_extract_case_rejects_an_unknown_case(generated_corpus) -> None:
+def test_extract_case_returns_an_envelope_for_an_unknown_case(generated_corpus) -> None:
     _manifest, result = generated_corpus
 
-    with pytest.raises(ExtractionError, match="unknown case"):
-        extract_case("case_does_not_exist", result.root)
+    outcome = extract_case("case_does_not_exist", result.root)
+
+    assert outcome.ok is False
+    assert outcome.error_code == "unknown_case"
+    assert "unknown case" in (outcome.message or "")
+    assert outcome.data is None
 
 
-def test_extract_case_reports_a_missing_corpus(tmp_path: Path) -> None:
-    with pytest.raises(ExtractionError, match="corpus"):
-        extract_case("case_onb_ridgeline", tmp_path / "absent")
+def test_extract_case_returns_an_envelope_for_a_missing_corpus(tmp_path: Path) -> None:
+    outcome = extract_case("case_onb_ridgeline", tmp_path / "absent")
+
+    assert outcome.ok is False
+    assert outcome.error_code == "corpus_not_found"
+    assert "corpus" in (outcome.message or "")
+    assert outcome.data is None
 
 
-def test_extract_case_becomes_needs_more_info_after_two_schema_failures(
-    generated_corpus,
-) -> None:
+def test_provider_failure_falls_back_for_the_whole_case(generated_corpus) -> None:
     _manifest, result = generated_corpus
-    provider = FakeProvider(structured={"legal_name": {"value": "guessed value"}})
+    provider = FakeProvider(structured={"document_type": "not_a_document"})
 
-    report = extract_case("case_onb_ridgeline", result.root, provider=provider)
+    report = successful_report(extract_case("case_onb_ridgeline", result.root, provider=provider))
 
-    assert report.status == "needs_more_info"
     assert report.provider == "fake"
-    assert len(report.documents) == 5
-    assert all(document.status == "needs_more_info" for document in report.documents)
-    assert len(report.issues) == 5
-    assert {issue.code for issue in report.issues} == {"schema_error"}
-    assert len(provider.calls) == 10
+    assert report.status == "extracted"
+    assert report.issues == []
+    assert all(document.fallback_used for document in report.documents)
+    assert all(document.status == "extracted" for document in report.documents)
 
 
-def test_extract_case_uses_provider_output_when_it_is_valid(generated_corpus) -> None:
+def test_extract_case_uses_provider_output_when_it_is_valid(
+    generated_corpus, provider_payload
+) -> None:
     _manifest, result = generated_corpus
     truth = result.cases["case_onb_ridgeline"]
     provider = FakeProvider()
     for document in truth.documents:
-        provider.queue_structured(_provider_payload(truth, document))
+        provider.queue_structured({"document_type": document.document_type, "confidence": 0.99})
+        provider.queue_structured(provider_payload(truth, document))
 
-    report = extract_case("case_onb_ridgeline", result.root, provider=provider)
+    report = successful_report(extract_case("case_onb_ridgeline", result.root, provider=provider))
 
     assert report.status == "extracted"
     assert report.provider == "fake"
     assert report.issues == []
-    assert len(provider.calls) == 5
+    assert len(provider.calls) == 10
     assert all(document.fields for document in report.documents)
+    assert all(document.classification.classifier == "provider" for document in report.documents)
+    assert all(document.fallback_used is False for document in report.documents)
     assert report.documents[0].fields["legal_name"].value == "Ridgeline Haulage LLC"

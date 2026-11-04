@@ -9,10 +9,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .citations import CitationError, DocumentText, Word
+from .citations import CitationError, DocumentText, PageText, Word
 from .fields import FieldDefinition, field_definitions
 from .layout import Line, page_lines
-from .models import Citation, Classification, DocumentExtraction, ExtractedValue
+from .models import (
+    BBox,
+    Citation,
+    Classification,
+    DocumentExtraction,
+    ExtractedValue,
+    unclassified_document,
+)
 
 LABEL_MAX_X = 175.0
 VALUE_MIN_X = 180.0
@@ -39,7 +46,7 @@ def _value_words(lines: list[Line], index: int) -> list[Word]:
     return words
 
 
-def _bbox_for(words: list[Word], page_width: float, page_height: float) -> tuple[float, ...]:
+def _bbox_for(words: list[Word], page: PageText) -> BBox:
     x0 = min(word.bbox[0] for word in words) - BBOX_PADDING
     y0 = min(word.bbox[1] for word in words) - BBOX_PADDING
     x1 = max(word.bbox[2] for word in words) + BBOX_PADDING
@@ -47,8 +54,8 @@ def _bbox_for(words: list[Word], page_width: float, page_height: float) -> tuple
     return (
         round(max(0.0, x0), 2),
         round(max(0.0, y0), 2),
-        round(min(page_width, x1), 2),
-        round(min(page_height, y1), 2),
+        round(min(page.width, x1), 2),
+        round(min(page.height, y1), 2),
     )
 
 
@@ -66,7 +73,7 @@ def _extract_field(
             continue
         quote = " ".join(word.text for word in words)
         page = document.pages[line.page - 1]
-        bbox = _bbox_for(words, page.width, page.height)
+        bbox = _bbox_for(words, page)
         citation = Citation(
             document_id=document_id,
             page=line.page,
@@ -80,11 +87,9 @@ def _extract_field(
 def extract_document(path: str | Path, classification: Classification) -> DocumentExtraction:
     definitions = field_definitions(classification.document_type)
     if not definitions:
-        return DocumentExtraction(
-            classification=classification,
-            status="needs_more_info",
-            error=f"no field schema for document type {classification.document_type!r}",
-            error_code="unclassified_document",
+        return unclassified_document(
+            classification,
+            f"no field schema for document type {classification.document_type!r}",
         )
 
     document = DocumentText.load(path)

@@ -22,6 +22,7 @@ from ..providers.base import (
     ProviderSchemaError,
 )
 from .citations import CitationError, DocumentText
+from .deterministic import extract_document
 from .fields import FieldDefinition, field_definitions
 from .layout import evidence_text
 from .models import (
@@ -30,7 +31,10 @@ from .models import (
     DocumentType,
     ExtractedValue,
     ExtractionCode,
+    unclassified_document,
 )
+
+PROVIDER_ATTEMPTS = 2
 
 SYSTEM_PROMPT = (
     "You extract fields from a synthetic freight-underwriting document. "
@@ -131,6 +135,29 @@ def _validate_result(
     return fields
 
 
+def _fallback_to_deterministic(
+    path: str | Path,
+    classification: Classification,
+    *,
+    code: ExtractionCode,
+    message: str,
+) -> DocumentExtraction:
+    fallback = extract_document(path, classification)
+    if fallback.status == "extracted":
+        return fallback.model_copy(update={"fallback_used": True})
+    return DocumentExtraction(
+        classification=classification,
+        status="needs_more_info",
+        fields=fallback.fields,
+        error=(
+            f"provider extraction failed: {message}; deterministic fallback failed: "
+            f"{fallback.error or 'unknown error'}"
+        ),
+        error_code=code,
+        fallback_used=True,
+    )
+
+
 def extract_with_provider(
     provider: ChatProvider,
     path: str | Path,
@@ -138,11 +165,9 @@ def extract_with_provider(
 ) -> DocumentExtraction:
     definitions = field_definitions(classification.document_type)
     if not definitions:
-        return DocumentExtraction(
-            classification=classification,
-            status="needs_more_info",
-            error=f"no field schema for document type {classification.document_type!r}",
-            error_code="unclassified_document",
+        return unclassified_document(
+            classification,
+            f"no field schema for document type {classification.document_type!r}",
         )
 
     document = DocumentText.load(path)
@@ -151,7 +176,7 @@ def extract_with_provider(
     last_code: ExtractionCode = "schema_error"
     last_message = "provider did not return a usable extraction"
 
-    for _attempt in range(2):
+    for _attempt in range(PROVIDER_ATTEMPTS):
         try:
             result = provider.complete_structured(messages, schema, temperature=0.0)
             fields = _validate_result(result, definitions, document, classification)
@@ -167,20 +192,25 @@ def extract_with_provider(
             last_code = exc.code
             last_message = str(exc)
         except ProviderError as exc:
-            return DocumentExtraction(
-                classification=classification,
-                status="needs_more_info",
-                error=str(exc),
-                error_code="provider_error",
+            return _fallback_to_deterministic(
+                path,
+                classification,
+                code="provider_error",
+                message=str(exc),
             )
         messages = _messages(document, classification, feedback=last_message)
 
-    return DocumentExtraction(
-        classification=classification,
-        status="needs_more_info",
-        error=f"{last_message} (after 2 attempts)",
-        error_code=last_code,
+    return _fallback_to_deterministic(
+        path,
+        classification,
+        code=last_code,
+        message=f"{last_message} (after {PROVIDER_ATTEMPTS} attempts)",
     )
 
 
-__all__ = ["OutputValidationError", "extract_with_provider", "extraction_schema"]
+__all__ = [
+    "OutputValidationError",
+    "PROVIDER_ATTEMPTS",
+    "extract_with_provider",
+    "extraction_schema",
+]

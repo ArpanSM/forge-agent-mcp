@@ -137,13 +137,4 @@ def field_definitions(document_type: DocumentType) -> tuple[FieldDefinition, ...
     return DOCUMENT_FIELDS.get(document_type, ())
 
 
-def required_field_keys(document_type: DocumentType) -> tuple[str, ...]:
-    return tuple(field.key for field in field_definitions(document_type) if field.required)
-
-
-__all__ = [
-    "DOCUMENT_FIELDS",
-    "FieldDefinition",
-    "field_definitions",
-    "required_field_keys",
-]
+__all__ = ["DOCUMENT_FIELDS", "FieldDefinition", "field_definitions"]

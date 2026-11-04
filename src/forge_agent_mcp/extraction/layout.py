@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .citations import DocumentText, Word
+from .models import BBox
 
 HEADER_BOTTOM = 115.0
 FOOTER_TOP_MARGIN = 60.0
@@ -37,7 +38,7 @@ class Line:
         return max(word.bbox[2] for word in self.words)
 
     @property
-    def bbox(self) -> tuple[float, float, float, float]:
+    def bbox(self) -> BBox:
         return (
             round(self.left, 2),
             round(self.top, 2),

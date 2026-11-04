@@ -1,8 +1,9 @@
 """Citation verification against the source PDF.
 
 A citation is only accepted when its page contains the quote, the extracted value
-is contained in that quote, and the bbox covers the quoted words. This is what
-makes "never guess a value" enforceable rather than a prompt request.
+matches that quote exactly after whitespace normalization, and the bbox covers the
+quoted words without swallowing most of the page. This is what makes "never guess
+a value" enforceable rather than a prompt request.
 """
 
 from __future__ import annotations
@@ -15,6 +16,11 @@ import pymupdf
 from .models import BBox, Citation
 
 POINT_TOLERANCE = 1.5
+MAX_BBOX_PAGE_FRACTION = 0.5
+
+
+class DocumentReadError(RuntimeError):
+    """A PDF could not be opened or read."""
 
 
 class CitationError(ValueError):
@@ -64,7 +70,7 @@ class DocumentText:
                     for index, page in enumerate(pdf, start=1)
                 )
         except (pymupdf.FileNotFoundError, RuntimeError) as exc:
-            raise CitationError(f"could not read document {source}: {exc}") from exc
+            raise DocumentReadError(f"could not read document {source}: {exc}") from exc
         return cls(path=source, pages=pages)
 
     def verify(self, citation: Citation, value: str) -> None:
@@ -80,11 +86,16 @@ class DocumentText:
             raise CitationError(f"quoted text is not present on page {citation.page}")
 
         normalized_value = normalize_space(value)
-        if normalized_value not in quote:
-            raise CitationError(f"value {value!r} is not contained in the quote")
+        if normalized_value != quote:
+            raise CitationError(f"value {value!r} does not match the quote exactly")
+
+        x0, y0, x1, y1 = citation.bbox
+        page_area = page.width * page.height
+        if page_area > 0 and (x1 - x0) * (y1 - y0) > page_area * MAX_BBOX_PAGE_FRACTION:
+            raise CitationError("citation bbox covers more than half the page")
 
         tokens = quote.split()
-        runs = list(_find_token_runs(page.words, tokens))
+        runs = _find_token_runs(page.words, tokens)
         if not runs:
             raise CitationError(
                 f"quoted text could not be located as a contiguous phrase on page {citation.page}"
@@ -129,6 +140,7 @@ def verify_citation(path: str | Path, citation: Citation, value: str) -> None:
 
 __all__ = [
     "CitationError",
+    "DocumentReadError",
     "DocumentText",
     "PageText",
     "Word",

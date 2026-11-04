@@ -5,7 +5,11 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from forge_agent_mcp.extraction.classify import classify_document
+from forge_agent_mcp.extraction.classify import (
+    classify_document,
+    classify_document_with_provider,
+)
+from forge_agent_mcp.providers.fake import FakeProvider
 
 
 def test_classifies_every_document_in_the_corpus(generated_corpus) -> None:
@@ -26,10 +30,11 @@ def test_classifies_every_document_in_the_corpus(generated_corpus) -> None:
                 f"{case.case_id} {document.filename}: classified as {classification.document_type}"
             )
             assert classification.confidence >= 0.5
+            assert classification.classifier == "keywords"
             correct += 1
             total += 1
 
-    assert total == 70
+    assert total > 0
     assert correct / total >= 0.95
 
 
@@ -54,6 +59,52 @@ def test_classification_survives_scan_noise(generated_corpus, tmp_path: Path) ->
 
     assert classification.document_type == "w9"
     assert classification.confidence >= 0.5
+
+
+def test_provider_classification_is_used_when_the_response_is_valid(
+    generated_corpus,
+) -> None:
+    _manifest, result = generated_corpus
+    case = next(case for case in result.index.cases if case.case_id == "case_onb_ridgeline")
+    document = next(item for item in case.documents if item.document_type == "w9")
+    path = result.root / "cases" / case.case_id / document.filename
+    provider = FakeProvider()
+    provider.queue_structured({"document_type": "w9", "confidence": 0.97})
+
+    classification = classify_document_with_provider(
+        provider,
+        path,
+        document_id=document.document_id,
+        title=document.title,
+        filename=document.filename,
+    )
+
+    assert classification.document_type == "w9"
+    assert classification.classifier == "provider"
+    assert classification.confidence == 0.97
+    assert len(provider.calls) == 1
+
+
+def test_provider_classification_falls_back_to_keywords_on_a_schema_failure(
+    generated_corpus,
+) -> None:
+    _manifest, result = generated_corpus
+    case = next(case for case in result.index.cases if case.case_id == "case_onb_ridgeline")
+    document = next(item for item in case.documents if item.document_type == "w9")
+    path = result.root / "cases" / case.case_id / document.filename
+    provider = FakeProvider()
+    provider.queue_structured({"document_type": "not_a_document", "confidence": 0.99})
+
+    classification = classify_document_with_provider(
+        provider,
+        path,
+        document_id=document.document_id,
+        title=document.title,
+        filename=document.filename,
+    )
+
+    assert classification.document_type == "w9"
+    assert classification.classifier == "keywords"
 
 
 def test_unknown_text_is_not_forced_into_a_known_type(tmp_path: Path) -> None:

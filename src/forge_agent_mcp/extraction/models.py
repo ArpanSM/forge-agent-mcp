@@ -1,14 +1,15 @@
-"""Public extraction contracts: citations, values and case reports."""
+"""Public extraction contracts: citations, values, reports and result envelopes."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from pydantic import Field, field_validator
 
 from ..corpus.vocab import CaseType, StrictModel
 
-DocumentType = Literal[
+KnownDocumentType = Literal[
     "application_kyc",
     "w9",
     "certificate_of_insurance",
@@ -18,19 +19,22 @@ DocumentType = Literal[
     "bill_of_lading",
     "proof_of_delivery",
     "invoice",
-    "unknown",
 ]
-
-BBox = tuple[float, float, float, float]
-
+DocumentType = KnownDocumentType | Literal["unknown"]
+ExtractionStatus = Literal["extracted", "needs_more_info"]
 ExtractionCode = Literal[
     "unclassified_document",
     "missing_field",
     "schema_error",
     "invalid_citation",
     "document_missing",
+    "document_unreadable",
     "provider_error",
 ]
+ExtractionErrorCode = Literal["unknown_case", "corpus_not_found", "corpus_invalid"]
+Classifier = Literal["provider", "keywords"]
+
+BBox = tuple[float, float, float, float]
 
 
 class Citation(StrictModel):
@@ -65,14 +69,16 @@ class Classification(StrictModel):
     title: str
     filename: str
     confidence: float = Field(ge=0.0, le=1.0)
+    classifier: Classifier = "keywords"
 
 
 class DocumentExtraction(StrictModel):
     classification: Classification
-    status: Literal["extracted", "needs_more_info"]
+    status: ExtractionStatus
     fields: dict[str, ExtractedValue] = Field(default_factory=dict)
     error: str | None = None
     error_code: ExtractionCode | None = None
+    fallback_used: bool = False
 
 
 class ExtractionIssue(StrictModel):
@@ -86,21 +92,81 @@ class CaseExtraction(StrictModel):
     case_id: str
     case_type: CaseType
     provider: str
-    status: Literal["extracted", "needs_more_info"]
+    status: ExtractionStatus
     as_of: str | None = None
     documents: list[DocumentExtraction]
     missing_documents: list[str] = Field(default_factory=list)
     issues: list[ExtractionIssue] = Field(default_factory=list)
 
 
+class CaseExtractionResult(StrictModel):
+    """Result envelope for the case-extraction operation.
+
+    Business failures (unknown case, missing corpus) return ``ok: false`` with a
+    stable code instead of raising through the library or CLI.
+    """
+
+    ok: bool
+    error_code: ExtractionErrorCode | None = None
+    message: str | None = None
+    data: CaseExtraction | None = None
+
+
+def unknown_classification(
+    document_id: str,
+    title: str,
+    filename: str,
+) -> Classification:
+    return Classification(
+        document_id=document_id,
+        document_type="unknown",
+        title=title,
+        filename=filename,
+        confidence=0.0,
+        classifier="keywords",
+    )
+
+
+def needs_more_info_document(
+    classification: Classification,
+    message: str,
+    code: ExtractionCode,
+) -> DocumentExtraction:
+    return DocumentExtraction(
+        classification=classification,
+        status="needs_more_info",
+        error=message,
+        error_code=code,
+    )
+
+
+def unclassified_document(classification: Classification, message: str) -> DocumentExtraction:
+    return needs_more_info_document(classification, message, "unclassified_document")
+
+
+def overall_status(documents: Sequence[DocumentExtraction]) -> ExtractionStatus:
+    if any(document.status == "needs_more_info" for document in documents):
+        return "needs_more_info"
+    return "extracted"
+
+
 __all__ = [
     "BBox",
     "CaseExtraction",
+    "CaseExtractionResult",
     "Citation",
     "Classification",
+    "Classifier",
     "DocumentExtraction",
     "DocumentType",
     "ExtractedValue",
     "ExtractionCode",
+    "ExtractionErrorCode",
     "ExtractionIssue",
+    "ExtractionStatus",
+    "KnownDocumentType",
+    "needs_more_info_document",
+    "overall_status",
+    "unclassified_document",
+    "unknown_classification",
 ]
