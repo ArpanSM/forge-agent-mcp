@@ -4,22 +4,23 @@ import pytest
 
 from forge_agent_mcp.extraction.extractor import extract_case
 from forge_agent_mcp.rules.corpus import RuleEngineError, load_case_packet
-from forge_agent_mcp.rules.engine import review_case, validate
+from forge_agent_mcp.rules.engine import validate
+from forge_agent_mcp.rules.runner import review_case
 from tests.rules_helpers import review_corpus_case
 
 
 def test_clean_onboarding_case_reviews_with_no_flags_and_approve(generated_corpus) -> None:
-    review = review_corpus_case(generated_corpus, "case_onb_ridgeline")
+    case_review = review_corpus_case(generated_corpus, "case_onb_ridgeline")
 
-    assert review.case_id == "case_onb_ridgeline"
-    assert review.case_type == "onboarding"
-    assert review.flags == []
-    assert review.recommendation.recommendation == "approve"
-    assert review.recommendation.decision == "approve"
-    assert review.recommendation.conditions == []
-    assert review.recommendation.evidence_gaps == []
-    assert "approve" in review.summary.lower()
-    assert review.summary.count("No rule flags") == 1
+    assert case_review.case_id == "case_onb_ridgeline"
+    assert case_review.case_type == "onboarding"
+    assert case_review.flags == []
+    assert case_review.recommendation.recommendation == "approve"
+    assert case_review.recommendation.decision == "approve"
+    assert case_review.recommendation.conditions == []
+    assert case_review.recommendation.evidence_gaps == []
+    assert "approve" in case_review.summary.lower()
+    assert case_review.summary.count("No rule flags") == 1
 
 
 def test_review_case_returns_an_envelope_for_an_unknown_case(generated_corpus) -> None:

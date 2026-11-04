@@ -5,12 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
-from .engine import review_case
 from .models import CaseReview, Evidence
-
-DEFAULT_CORPUS = Path("data") / "corpus"
+from .runner import review_case
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -21,8 +18,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case", required=True, help="case id from data/corpus/corpus.json")
     parser.add_argument(
         "--corpus",
-        default=str(DEFAULT_CORPUS),
-        help=f"generated corpus directory (default: {DEFAULT_CORPUS})",
+        required=True,
+        help="generated corpus directory; the module entrypoint supplies data/corpus",
     )
     return parser
 

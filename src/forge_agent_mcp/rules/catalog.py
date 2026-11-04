@@ -1,7 +1,9 @@
-"""The fixed flag taxonomy, severities and required-document titles.
+"""The fixed flag taxonomy, severities, conditions and document titles.
 
-The catalogue mirrors ``corpus/manifest.json``; a test guards against drift.
-Flags carry the catalogue rule text so every finding is auditable.
+The catalogue mirrors ``corpus/manifest.json`` except for the two flags listed in
+``FUTURE_FLAG_CODES``: they are catalogued upstream but have no validator in this slice.
+A test guards both the mirror and the future-work list. Flags carry the catalogue rule
+text so every finding is auditable.
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..corpus.vocab import DecisionEffect, Severity
+from ..extraction.models import KnownDocumentType
 from .models import Evidence, FlagCode, RuleFlag
 
 
@@ -18,7 +21,6 @@ class FlagDefinition:
     severity: Severity
     rule: str
     decision_effect: DecisionEffect
-    default_rule_id: str
 
 
 FLAG_CATALOG: tuple[FlagDefinition, ...] = (
@@ -27,127 +29,106 @@ FLAG_CATALOG: tuple[FlagDefinition, ...] = (
         "hard_stop",
         "watchlist.matches is not empty",
         "decline_or_escalate",
-        "watchlist.match",
     ),
     FlagDefinition(
         "authority_inactive",
         "hard_stop",
         "authority.status is not active",
         "decline_or_escalate",
-        "authority.status",
     ),
     FlagDefinition(
         "identity_mismatch",
         "hard_stop",
         "legal name, EIN or MC/DOT differs across application, W-9 and COI",
         "decline_or_escalate",
-        "identity.cross_document",
     ),
     FlagDefinition(
         "insurance_expired",
         "hard_stop",
         "insurance.expires_on is before as_of",
         "decline_or_escalate",
-        "insurance.expiry",
     ),
     FlagDefinition(
         "insurance_below_minimum",
         "hard_stop",
         "auto liability is below 1000000 or cargo is below 100000",
         "decline_or_escalate",
-        "insurance.minimum_limits",
     ),
     FlagDefinition(
         "duplicate_invoice",
         "hard_stop",
         "invoice number or document hash appears in prior invoice history",
         "decline_or_escalate",
-        "duplicate.invoice",
     ),
     FlagDefinition(
         "bank_account_changed",
         "high",
         "bank account opened within 30 days of as_of",
         "hold_or_condition",
-        "bank.account_age",
     ),
     FlagDefinition(
         "bank_account_name_mismatch",
         "high",
         "bank account holder differs from the legal name",
         "hold_or_condition",
-        "bank.account_name",
     ),
     FlagDefinition(
         "invoice_arithmetic_mismatch",
         "high",
         "invoice total differs from rate confirmation or line items do not sum",
         "hold_or_condition",
-        "invoice.arithmetic",
     ),
     FlagDefinition(
         "pod_mismatch",
         "high",
         "POD weight or delivery date differs from the BOL",
         "hold_or_condition",
-        "pod.contents",
     ),
     FlagDefinition(
         "missing_document",
         "high",
         "a required packet document is absent",
         "hold_or_condition",
-        "documents.required",
     ),
     FlagDefinition(
         "document_instruction_injection",
         "high",
         "document text contains instructions aimed at an AI agent",
         "hold_or_condition",
-        "injection.document_instruction",
     ),
     FlagDefinition(
         "authority_young",
         "medium",
         "authority granted within 6 months of as_of",
         "condition_or_reserve",
-        "authority.age",
     ),
     FlagDefinition(
         "round_dollar_invoice",
         "medium",
         "invoice total is a whole multiple of 500 with no accessorials",
         "condition_or_reserve",
-        "invoice.round_dollar",
-    ),
-    FlagDefinition(
-        "altered_metadata",
-        "medium",
-        "PDF metadata or dates disagree with the packet",
-        "condition_or_reserve",
-        "document.metadata",
     ),
     FlagDefinition(
         "missing_optional_field",
         "low",
         "an optional contact or reference field is blank",
         "approve_with_clarification",
-        "invoice.optional_reference",
-    ),
-    FlagDefinition(
-        "formatting_inconsistency",
-        "low",
-        "date or number formats differ across documents",
-        "approve_with_clarification",
-        "document.formatting",
     ),
 )
 
-FLAG_BY_CODE: dict[str, FlagDefinition] = {flag.code: flag for flag in FLAG_CATALOG}
-FLAG_ORDER: dict[str, int] = {flag.code: index for index, flag in enumerate(FLAG_CATALOG)}
-SEVERITY_ORDER = {"hard_stop": 0, "high": 1, "medium": 2, "low": 3}
+# Upstream catalogue entries deliberately deferred to a later slice.
+FUTURE_FLAG_CODES: frozenset[str] = frozenset({"altered_metadata", "formatting_inconsistency"})
 
-DOCUMENT_ORDER: tuple[str, ...] = (
+FLAG_BY_CODE: dict[FlagCode, FlagDefinition] = {flag.code: flag for flag in FLAG_CATALOG}
+FLAG_ORDER: dict[FlagCode, int] = {flag.code: index for index, flag in enumerate(FLAG_CATALOG)}
+SEVERITY_ORDER: dict[Severity, int] = {
+    "hard_stop": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
+
+DOCUMENT_ORDER: tuple[KnownDocumentType, ...] = (
     "application_kyc",
     "w9",
     "certificate_of_insurance",
@@ -159,7 +140,7 @@ DOCUMENT_ORDER: tuple[str, ...] = (
     "invoice",
 )
 
-DOCUMENT_TITLES: dict[str, str] = {
+DOCUMENT_TITLES: dict[KnownDocumentType, str] = {
     "application_kyc": "Carrier Application / KYC",
     "w9": "IRS Form W-9 (Synthetic)",
     "certificate_of_insurance": "Certificate of Insurance",
@@ -170,6 +151,31 @@ DOCUMENT_TITLES: dict[str, str] = {
     "proof_of_delivery": "Proof of Delivery",
     "invoice": "Freight Invoice",
 }
+
+RULE_CONDITIONS: dict[str, str] = {
+    "authority.age": "Obtain six months of authority history or adjust reserve.",
+    "bank.account_age": "Verify the new bank account with a dated bank letter.",
+    "bank.account_name": "Resolve the bank account-name mismatch.",
+    "invoice.arithmetic": "Reconcile the invoice to the rate confirmation.",
+    "invoice.arithmetic_unverifiable": (
+        "Obtain a complete invoice and rate confirmation before funding."
+    ),
+    "invoice.round_dollar": "Adjust reserve for the round-dollar invoice.",
+    "invoice.optional_reference": "Confirm the optional invoice reference before funding.",
+    "pod.weight": "Obtain a POD matching the BOL weight.",
+    "pod.delivery_date": "Obtain a POD matching the BOL delivery date.",
+    "pod.signature": "Obtain a signed proof of delivery.",
+}
+
+
+def injection_location(document_type: KnownDocumentType | None) -> str:
+    if document_type == "application_kyc":
+        return "application"
+    if document_type == "proof_of_delivery":
+        return "POD"
+    if document_type is None:
+        return "document"
+    return DOCUMENT_TITLES.get(document_type, "document").lower()
 
 
 def make_flag(
@@ -209,8 +215,11 @@ __all__ = [
     "FLAG_BY_CODE",
     "FLAG_CATALOG",
     "FLAG_ORDER",
+    "FUTURE_FLAG_CODES",
     "FlagDefinition",
+    "RULE_CONDITIONS",
     "SEVERITY_ORDER",
+    "injection_location",
     "make_flag",
     "sort_flags",
 ]

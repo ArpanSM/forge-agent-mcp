@@ -75,10 +75,17 @@ calls a model or the network.
 
 Hard stops (watchlist hit, identity mismatch, inactive authority, expired or underinsured
 policy, duplicate invoice) always decline or escalate. Two or more high flags hold the
-case; one high flag is a conditional approval, except missing documents which request
-documents; medium flags add conditions; low flags approve with clarification. Text aimed at
-an AI agent is flagged as `document_instruction_injection`, quoted nowhere, ignored, and
-held for manual review; it can never override a hard stop.
+case; one high flag is a conditional approval. Missing required documents always request
+documents, even when another high flag is present. An invoice whose total or line items
+cannot be parsed is flagged high and held as unverifiable. Medium flags add conditions;
+low flags approve with clarification.
+
+Text aimed at an AI agent is flagged as `document_instruction_injection`, quoted nowhere,
+ignored, and held for manual review. The injection cannot change the risk facts or
+override a hard stop. Demo thresholds live in
+[`src/forge_agent_mcp/rules/policy.py`](src/forge_agent_mcp/rules/policy.py) and mirror
+the gateway policy pack. The corpus also catalogues `altered_metadata` and
+`formatting_inconsistency`; both are deferred to a later slice and are not emitted here.
 
 ## MCP gateway
 

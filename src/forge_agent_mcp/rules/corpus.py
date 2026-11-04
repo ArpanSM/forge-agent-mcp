@@ -10,6 +10,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from ..corpus.models import CorpusIndex, DocumentEntry, RecordPayload
 from ..corpus.vocab import CaseType, StrictModel
+from ..extraction.models import KnownDocumentType
+from .models import RuleErrorCode
 
 CORPUS_INDEX = "corpus.json"
 RECORD_ADAPTER = TypeAdapter(RecordPayload)
@@ -18,7 +20,7 @@ RECORD_ADAPTER = TypeAdapter(RecordPayload)
 class RuleEngineError(RuntimeError):
     """A case packet could not be loaded for rule evaluation."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: RuleErrorCode, message: str) -> None:
         self.code = code
         super().__init__(message)
 
@@ -36,7 +38,7 @@ class CasePacket(StrictModel):
             None,
         )
 
-    def document_by_type(self, document_type: str) -> DocumentEntry | None:
+    def document_by_type(self, document_type: KnownDocumentType) -> DocumentEntry | None:
         return next(
             (document for document in self.documents if document.document_type == document_type),
             None,

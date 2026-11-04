@@ -94,7 +94,7 @@ RUBRIC = [
             "Obtain a signed proof of delivery.",
             "Verify the new bank account with a dated bank letter.",
         ],
-        id="missing-document-request",
+        id="missing-document-beats-high-flag",
     ),
     pytest.param(
         [_flag("document_instruction_injection", document_type="application_kyc")],
@@ -160,6 +160,46 @@ def test_decision_rubric(
     assert outcome.decision == decision
     assert outcome.conditions == conditions
     assert outcome.rationale
+
+
+def test_clean_packet_with_injection_is_held_for_review() -> None:
+    outcome = recommend([_flag("document_instruction_injection", document_type="application_kyc")])
+
+    assert outcome.recommendation == "hold"
+    assert outcome.decision == "request_documents"
+    assert outcome.conditions == [
+        "Quarantine the injected application text and review the packet manually."
+    ]
+
+
+def test_hard_stop_wins_over_injection() -> None:
+    outcome = recommend(
+        [
+            _flag("document_instruction_injection", document_type="proof_of_delivery"),
+            _flag("identity_mismatch"),
+        ]
+    )
+
+    assert outcome.recommendation == "decline"
+    assert outcome.decision == "decline"
+    assert outcome.conditions == []
+
+
+def test_missing_documents_request_documents_even_with_another_high_flag() -> None:
+    outcome = recommend(
+        [
+            _flag(
+                "missing_document",
+                missing_document_type="proof_of_delivery",
+                document_type="proof_of_delivery",
+            ),
+            _flag("bank_account_changed"),
+        ]
+    )
+
+    assert outcome.recommendation == "request_documents"
+    assert outcome.decision == "request_documents"
+    assert outcome.conditions[0] == "Obtain a signed proof of delivery."
 
 
 def test_evidence_gaps_are_preserved_without_changing_a_clean_decision() -> None:

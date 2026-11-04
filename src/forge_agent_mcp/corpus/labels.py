@@ -295,7 +295,7 @@ def _document_instruction_injection(context: EvidenceContext) -> tuple[Citation,
     return (
         citation,
         f"The {location} contain an instruction aimed at an AI agent; the text is "
-        "quarantined and the decision is unchanged.",
+        "quarantined and the case is held for review.",
     )
 
 

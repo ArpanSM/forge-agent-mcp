@@ -14,6 +14,7 @@ from ..corpus.vocab import (
     Severity,
     StrictModel,
 )
+from ..extraction.models import KnownDocumentType
 
 FlagCode = Literal[
     "watchlist_hit",
@@ -30,9 +31,7 @@ FlagCode = Literal[
     "document_instruction_injection",
     "authority_young",
     "round_dollar_invoice",
-    "altered_metadata",
     "missing_optional_field",
-    "formatting_inconsistency",
 ]
 RuleErrorCode = Literal[
     "unknown_case",
@@ -46,13 +45,13 @@ class Evidence(StrictModel):
     """Where a flag came from: a document span, a structured record or a gap."""
 
     document_id: str | None = None
-    document_type: str | None = None
+    document_type: KnownDocumentType | None = None
     page: int | None = Field(default=None, ge=1)
     bbox: tuple[float, float, float, float] | None = None
     quote: str | None = None
     record_id: str | None = None
     record_path: str | None = None
-    missing_document_type: str | None = None
+    missing_document_type: KnownDocumentType | None = None
     missing_field: str | None = None
 
 

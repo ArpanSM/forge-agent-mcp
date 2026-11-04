@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from forge_agent_mcp.corpus.generator import GenerationResult
+from forge_agent_mcp.corpus.manifest import Manifest
 from forge_agent_mcp.extraction.extractor import extract_case
-from forge_agent_mcp.extraction.models import CaseExtraction
+from forge_agent_mcp.extraction.models import CaseExtraction, KnownDocumentType
 from forge_agent_mcp.rules.corpus import load_case_packet
 from forge_agent_mcp.rules.engine import review
 from forge_agent_mcp.rules.models import CaseReview
+
+CorpusFixture = tuple[Manifest, GenerationResult]
 
 
 def build_review(corpus_root: Path, case_id: str) -> CaseReview:
@@ -19,14 +23,14 @@ def build_review(corpus_root: Path, case_id: str) -> CaseReview:
     return review(extraction.data, packet)
 
 
-def review_corpus_case(generated_corpus, case_id: str) -> CaseReview:
+def review_corpus_case(generated_corpus: CorpusFixture, case_id: str) -> CaseReview:
     _manifest, result = generated_corpus
     return build_review(result.root, case_id)
 
 
 def drop_field(
     extraction: CaseExtraction,
-    document_type: str,
+    document_type: KnownDocumentType,
     key: str,
 ) -> CaseExtraction:
     """Return a copy with one extracted field removed."""
@@ -44,7 +48,7 @@ def drop_field(
 
 def replace_field_value(
     extraction: CaseExtraction,
-    document_type: str,
+    document_type: KnownDocumentType,
     key: str,
     value: str,
 ) -> CaseExtraction:

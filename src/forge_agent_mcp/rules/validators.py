@@ -10,23 +10,31 @@ from decimal import Decimal
 
 from ..corpus.manifest import INVOICE_DOCUMENTS, ONBOARDING_DOCUMENTS
 from ..corpus.models import PriorInvoiceRecord, WatchlistRecord
-from ..extraction.models import CaseExtraction, DocumentExtraction, ExtractedValue
-from .catalog import DOCUMENT_ORDER, DOCUMENT_TITLES, make_flag
+from ..extraction.models import (
+    CaseExtraction,
+    DocumentExtraction,
+    ExtractedValue,
+    KnownDocumentType,
+)
+from .catalog import (
+    DOCUMENT_ORDER,
+    DOCUMENT_TITLES,
+    injection_location,
+    make_flag,
+)
 from .corpus import CasePacket
 from .models import Evidence, RuleFlag
+from .policy import RulePolicy
 from .values import (
     Documents,
+    date_value,
     evidence_for,
     format_money,
+    money_value,
     normalize_identifier,
     normalize_name,
-    parse_date,
-    parse_money,
-    parse_weight,
+    weight_value,
 )
-
-AUTO_LIABILITY_MINIMUM = Decimal("1000000.00")
-CARGO_MINIMUM = Decimal("100000.00")
 
 INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:system|assistant|developer)\s+instruction\b", re.IGNORECASE),
@@ -42,94 +50,98 @@ INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+@dataclass(frozen=True)
+class IdentityCheck:
+    left_type: KnownDocumentType
+    left_key: str
+    right_type: KnownDocumentType
+    right_key: str
+    label: str
+    right_label: str
+    normalizer: Callable[[str], str]
+
+
+IDENTITY_CHECKS: tuple[IdentityCheck, ...] = (
+    IdentityCheck(
+        "application_kyc",
+        "legal_name",
+        "w9",
+        "legal_name",
+        "legal name",
+        "W-9",
+        normalize_name,
+    ),
+    IdentityCheck(
+        "application_kyc",
+        "ein",
+        "w9",
+        "ein",
+        "EIN",
+        "W-9",
+        normalize_identifier,
+    ),
+    IdentityCheck(
+        "application_kyc",
+        "legal_name",
+        "certificate_of_insurance",
+        "insured_name",
+        "legal name",
+        "certificate of insurance",
+        normalize_name,
+    ),
+    IdentityCheck(
+        "application_kyc",
+        "legal_name",
+        "mc_authority",
+        "legal_name",
+        "legal name",
+        "MC authority snapshot",
+        normalize_name,
+    ),
+    IdentityCheck(
+        "application_kyc",
+        "mc_number",
+        "mc_authority",
+        "mc_number",
+        "MC number",
+        "MC authority snapshot",
+        normalize_identifier,
+    ),
+    IdentityCheck(
+        "application_kyc",
+        "dot_number",
+        "mc_authority",
+        "dot_number",
+        "DOT number",
+        "MC authority snapshot",
+        normalize_identifier,
+    ),
+)
+
+
 def _compare(
     documents: Documents,
-    *,
-    left_type: str,
-    left_key: str,
-    right_type: str,
-    right_key: str,
-    label: str,
-    right_label: str,
-    normalizer: Callable[[str], str],
+    check: IdentityCheck,
 ) -> tuple[str, Evidence] | None:
-    left: ExtractedValue | None = documents.field(left_type, left_key)
-    right: ExtractedValue | None = documents.field(right_type, right_key)
+    left: ExtractedValue | None = documents.field(check.left_type, check.left_key)
+    right: ExtractedValue | None = documents.field(check.right_type, check.right_key)
     if left is None or right is None:
         return None
-    if normalizer(left.value) == normalizer(right.value):
+    if check.normalizer(left.value) == check.normalizer(right.value):
         return None
     detail = (
-        f"{label.capitalize()} {right.value!r} on the {right_label} differs from "
+        f"{check.label.capitalize()} {right.value!r} on the {check.right_label} differs from "
         f"{left.value!r} on the application."
     )
-    return detail, evidence_for(right, right_type)
+    return detail, evidence_for(right, check.right_type)
 
 
 def validate_identity(documents: Documents) -> list[RuleFlag]:
-    checks = (
-        _compare(
-            documents,
-            left_type="application_kyc",
-            left_key="legal_name",
-            right_type="w9",
-            right_key="legal_name",
-            label="legal name",
-            right_label="W-9",
-            normalizer=normalize_name,
-        ),
-        _compare(
-            documents,
-            left_type="application_kyc",
-            left_key="ein",
-            right_type="w9",
-            right_key="ein",
-            label="EIN",
-            right_label="W-9",
-            normalizer=normalize_identifier,
-        ),
-        _compare(
-            documents,
-            left_type="application_kyc",
-            left_key="legal_name",
-            right_type="certificate_of_insurance",
-            right_key="insured_name",
-            label="legal name",
-            right_label="certificate of insurance",
-            normalizer=normalize_name,
-        ),
-        _compare(
-            documents,
-            left_type="application_kyc",
-            left_key="legal_name",
-            right_type="mc_authority",
-            right_key="legal_name",
-            label="legal name",
-            right_label="MC authority snapshot",
-            normalizer=normalize_name,
-        ),
-        _compare(
-            documents,
-            left_type="application_kyc",
-            left_key="mc_number",
-            right_type="mc_authority",
-            right_key="mc_number",
-            label="MC number",
-            right_label="MC authority snapshot",
-            normalizer=normalize_identifier,
-        ),
-        _compare(
-            documents,
-            left_type="application_kyc",
-            left_key="dot_number",
-            right_type="mc_authority",
-            right_key="dot_number",
-            label="DOT number",
-            right_label="MC authority snapshot",
-            normalizer=normalize_identifier,
-        ),
-    )
-    mismatches = [check for check in checks if check is not None]
+    mismatches = [
+        check
+        for comparison in IDENTITY_CHECKS
+        if (check := _compare(documents, comparison)) is not None
+    ]
     if not mismatches:
         return []
 
@@ -144,27 +156,27 @@ def validate_identity(documents: Documents) -> list[RuleFlag]:
     ]
 
 
-def validate_bank(documents: Documents, as_of: date) -> list[RuleFlag]:
+def validate_bank(
+    documents: Documents,
+    as_of: date,
+    policy: RulePolicy,
+) -> list[RuleFlag]:
     if documents.get("bank_letter") is None:
         return []
 
     flags: list[RuleFlag] = []
-    opened_value = documents.field("bank_letter", "account_opened_on")
-    opened_on = parse_date(opened_value.value if opened_value else None)
-    if (
-        opened_value is not None
-        and opened_on is not None
-        and opened_on > as_of - timedelta(days=30)
-    ):
+    opened = date_value(documents, "bank_letter", "account_opened_on")
+    if opened is not None and opened.value > as_of - timedelta(days=policy.bank_change_window_days):
         flags.append(
             make_flag(
                 "bank_account_changed",
                 rule_id="bank.account_age",
                 details=(
-                    f"Account opened on {opened_on.isoformat()}, within 30 days of the "
-                    f"as-of date {as_of.isoformat()}."
+                    f"Account opened on {opened.value.isoformat()}, within "
+                    f"{policy.bank_change_window_days} days of the as-of date "
+                    f"{as_of.isoformat()}."
                 ),
-                evidence=evidence_for(opened_value, "bank_letter"),
+                evidence=evidence_for(opened.extracted, "bank_letter"),
             )
         )
 
@@ -253,22 +265,50 @@ def validate_duplicates(documents: Documents, packet: CasePacket) -> list[RuleFl
 LINE_ITEM_KEYS = ("linehaul", "fuel_surcharge", "accessorials")
 
 
-def _money_values(documents: Documents, document_type: str) -> dict[str, Decimal] | None:
+def _money_values(
+    documents: Documents,
+    document_type: KnownDocumentType,
+) -> tuple[dict[str, Decimal] | None, list[tuple[KnownDocumentType, str]]]:
     values: dict[str, Decimal] = {}
+    missing: list[tuple[KnownDocumentType, str]] = []
     for key in (*LINE_ITEM_KEYS, "total"):
-        extracted = documents.field(document_type, key)
-        parsed = parse_money(extracted.value if extracted else None)
+        parsed = money_value(documents, document_type, key)
         if parsed is None:
-            return None
-        values[key] = parsed
-    return values
+            missing.append((document_type, key))
+        else:
+            values[key] = parsed.value
+    return (None if missing else values), missing
+
+
+def _unverifiable_arithmetic_flag(
+    documents: Documents,
+    missing: list[tuple[KnownDocumentType, str]],
+) -> RuleFlag:
+    document_type, key = missing[0]
+    document = documents.get(document_type)
+    fields = ", ".join(f"{missing_type}.{missing_key}" for missing_type, missing_key in missing)
+    return make_flag(
+        "invoice_arithmetic_mismatch",
+        rule_id="invoice.arithmetic_unverifiable",
+        details=f"Invoice arithmetic could not be verified; missing or unparseable: {fields}.",
+        evidence=Evidence(
+            document_id=document.classification.document_id if document is not None else None,
+            document_type=document_type,
+            missing_field=key,
+        ),
+    )
 
 
 def validate_invoice_arithmetic(documents: Documents) -> list[RuleFlag]:
-    invoice = _money_values(documents, "invoice")
-    rate = _money_values(documents, "rate_confirmation")
-    if invoice is None or rate is None:
+    if documents.get("invoice") is None or documents.get("rate_confirmation") is None:
         return []
+
+    invoice, invoice_missing = _money_values(documents, "invoice")
+    rate, rate_missing = _money_values(documents, "rate_confirmation")
+    missing = [*invoice_missing, *rate_missing]
+    if missing:
+        return [_unverifiable_arithmetic_flag(documents, missing)]
+    assert invoice is not None and rate is not None
 
     details: list[str] = []
     evidence_key = "total"
@@ -308,48 +348,51 @@ def validate_invoice_arithmetic(documents: Documents) -> list[RuleFlag]:
     ]
 
 
-def validate_round_dollar(documents: Documents) -> list[RuleFlag]:
-    total_value = documents.field("invoice", "total")
-    accessorials_value = documents.field("invoice", "accessorials")
-    total = parse_money(total_value.value if total_value else None)
-    accessorials = parse_money(accessorials_value.value if accessorials_value else None)
+def validate_round_dollar(documents: Documents, policy: RulePolicy) -> list[RuleFlag]:
+    total = money_value(documents, "invoice", "total")
+    accessorials = money_value(documents, "invoice", "accessorials")
     if (
-        total_value is not None
-        and total is not None
-        and total > 0
+        total is not None
         and accessorials is not None
-        and accessorials == 0
-        and total % 500 == 0
+        and total.value > 0
+        and accessorials.value == 0
+        and total.value % policy.round_dollar_multiple == 0
     ):
         return [
             make_flag(
                 "round_dollar_invoice",
                 rule_id="invoice.round_dollar",
                 details="Invoice total is a round multiple of $500.00 with no accessorials.",
-                evidence=evidence_for(total_value, "invoice"),
+                evidence=evidence_for(total.extracted, "invoice"),
             )
         ]
     return []
 
 
-def _injection_location(document_type: str) -> str:
-    if document_type == "application_kyc":
-        return "application"
-    if document_type == "proof_of_delivery":
-        return "POD"
-    return DOCUMENT_TITLES.get(document_type, "document").lower()
+def _injection_evidence(
+    extracted: ExtractedValue,
+    document_type: KnownDocumentType | None,
+) -> Evidence:
+    if document_type is not None:
+        return evidence_for(extracted, document_type).model_copy(update={"quote": None})
+    citation = extracted.citation
+    return Evidence(
+        document_id=citation.document_id,
+        page=citation.page,
+        bbox=citation.bbox,
+    )
 
 
 def validate_injection(extraction: CaseExtraction) -> list[RuleFlag]:
     flags: list[RuleFlag] = []
     for document in extraction.documents:
         document_type = document.classification.document_type
+        known_type = None if document_type == "unknown" else document_type
         for extracted in document.fields.values():
             text = f"{extracted.value}\n{extracted.citation.quote}"
             if not any(pattern.search(text) for pattern in INJECTION_PATTERNS):
                 continue
-            location = _injection_location(document_type)
-            evidence = evidence_for(extracted, document_type).model_copy(update={"quote": None})
+            location = injection_location(known_type)
             flags.append(
                 make_flag(
                     "document_instruction_injection",
@@ -358,7 +401,7 @@ def validate_injection(extraction: CaseExtraction) -> list[RuleFlag]:
                         f"Document text addressed to an AI agent was detected in the {location}; "
                         "the instruction is ignored and the text is quarantined."
                     ),
-                    evidence=evidence,
+                    evidence=_injection_evidence(extracted, known_type),
                 )
             )
             break
@@ -370,9 +413,9 @@ def validate_optional_fields(documents: Documents) -> list[RuleFlag]:
     if invoice is None or "reference_number" in invoice.fields:
         return []
 
-    total_value = documents.field("invoice", "total")
-    if total_value is not None:
-        evidence = evidence_for(total_value, "invoice").model_copy(
+    total = money_value(documents, "invoice", "total")
+    if total is not None:
+        evidence = evidence_for(total.extracted, "invoice").model_copy(
             update={"missing_field": "reference_number"}
         )
     else:
@@ -398,7 +441,7 @@ def validate_pod(documents: Documents) -> list[RuleFlag]:
 
     details: list[str] = []
     evidence: Evidence | None = None
-    rule_id = "pod.contents"
+    rule_id: str | None = None
 
     signature = documents.field("proof_of_delivery", "signed_by")
     if signature is None or not signature.value.strip():
@@ -414,44 +457,30 @@ def validate_pod(documents: Documents) -> list[RuleFlag]:
         )
         rule_id = "pod.signature"
 
-    pod_weight_value = documents.field("proof_of_delivery", "weight_lbs")
-    pod_weight = parse_weight(pod_weight_value.value if pod_weight_value else None)
-    bol_weight_value = documents.field("bill_of_lading", "weight_lbs")
-    bol_weight = parse_weight(bol_weight_value.value if bol_weight_value else None)
+    pod_weight = weight_value(documents, "proof_of_delivery", "weight_lbs")
+    bol_weight = weight_value(documents, "bill_of_lading", "weight_lbs")
     if bol_weight is None:
-        rate_weight_value = documents.field("rate_confirmation", "weight_lbs")
-        bol_weight = parse_weight(rate_weight_value.value if rate_weight_value else None)
-    if (
-        pod_weight_value is not None
-        and pod_weight is not None
-        and bol_weight is not None
-        and pod_weight != bol_weight
-    ):
+        bol_weight = weight_value(documents, "rate_confirmation", "weight_lbs")
+    if pod_weight is not None and bol_weight is not None and pod_weight.value != bol_weight.value:
         details.append(
-            f"POD weight {pod_weight:,} lbs differs from the BOL weight {bol_weight:,} lbs."
+            f"POD weight {pod_weight.value:,} lbs differs from the BOL weight "
+            f"{bol_weight.value:,} lbs."
         )
-        evidence = evidence_for(pod_weight_value, "proof_of_delivery")
+        evidence = evidence_for(pod_weight.extracted, "proof_of_delivery")
         rule_id = "pod.weight"
 
-    delivered_value = documents.field("proof_of_delivery", "delivered_on")
-    delivered_on = parse_date(delivered_value.value if delivered_value else None)
-    expected_value = documents.field("rate_confirmation", "delivery_date")
-    expected_on = parse_date(expected_value.value if expected_value else None)
-    if (
-        delivered_value is not None
-        and delivered_on is not None
-        and expected_on is not None
-        and delivered_on != expected_on
-    ):
+    delivered = date_value(documents, "proof_of_delivery", "delivered_on")
+    expected = date_value(documents, "rate_confirmation", "delivery_date")
+    if delivered is not None and expected is not None and delivered.value != expected.value:
         details.append(
-            f"POD delivery date {delivered_on.isoformat()} differs from the rate confirmation "
-            f"delivery date {expected_on.isoformat()}."
+            f"POD delivery date {delivered.value.isoformat()} differs from the rate "
+            f"confirmation delivery date {expected.value.isoformat()}."
         )
         if evidence is None:
-            evidence = evidence_for(delivered_value, "proof_of_delivery")
+            evidence = evidence_for(delivered.extracted, "proof_of_delivery")
             rule_id = "pod.delivery_date"
 
-    if not details or evidence is None:
+    if not details or evidence is None or rule_id is None:
         return []
     return [
         make_flag(
@@ -463,55 +492,75 @@ def validate_pod(documents: Documents) -> list[RuleFlag]:
     ]
 
 
-def validate_insurance(documents: Documents, as_of: date) -> list[RuleFlag]:
-    document = documents.get("certificate_of_insurance")
-    if document is None:
+def validate_insurance(
+    documents: Documents,
+    as_of: date,
+    policy: RulePolicy,
+) -> list[RuleFlag]:
+    if documents.get("certificate_of_insurance") is None:
         return []
 
     flags: list[RuleFlag] = []
-    expires_value = documents.field("certificate_of_insurance", "expires_on")
-    expires_on = parse_date(expires_value.value if expires_value else None)
-    if expires_value is not None and expires_on is not None and expires_on < as_of:
+    expires = date_value(documents, "certificate_of_insurance", "expires_on")
+    if expires is not None and expires.value < as_of:
         flags.append(
             make_flag(
                 "insurance_expired",
                 rule_id="insurance.expiry",
                 details=(
-                    f"Policy expired on {expires_on.isoformat()}; "
+                    f"Policy expired on {expires.value.isoformat()}; "
                     f"the as-of date is {as_of.isoformat()}."
                 ),
-                evidence=evidence_for(expires_value, "certificate_of_insurance"),
+                evidence=evidence_for(expires.extracted, "certificate_of_insurance"),
             )
         )
 
-    auto_value = documents.field("certificate_of_insurance", "auto_liability_limit")
-    cargo_value = documents.field("certificate_of_insurance", "cargo_limit")
-    auto_limit = parse_money(auto_value.value if auto_value else None)
-    cargo_limit = parse_money(cargo_value.value if cargo_value else None)
-    if (auto_limit is not None and auto_limit < AUTO_LIABILITY_MINIMUM) or (
-        cargo_limit is not None and cargo_limit < CARGO_MINIMUM
-    ):
-        auto_text = format_money(auto_limit) if auto_limit is not None else "not stated"
-        cargo_text = format_money(cargo_limit) if cargo_limit is not None else "not stated"
-        evidence_value = auto_value if auto_limit is not None else cargo_value
-        assert evidence_value is not None
-        flags.append(
-            make_flag(
-                "insurance_below_minimum",
-                rule_id="insurance.minimum_limits",
-                details=(
-                    f"Auto liability {auto_text} and cargo {cargo_text} are below the "
-                    "$1,000,000.00 auto and $100,000.00 cargo minimums."
-                ),
-                evidence=evidence_for(evidence_value, "certificate_of_insurance"),
-            )
+    auto = money_value(documents, "certificate_of_insurance", "auto_liability_limit")
+    cargo = money_value(documents, "certificate_of_insurance", "cargo_limit")
+    auto_below = auto is not None and auto.value < policy.min_auto_liability
+    cargo_below = cargo is not None and cargo.value < policy.min_cargo_limit
+    if auto_below and cargo_below:
+        assert auto is not None and cargo is not None
+        details = (
+            f"Auto liability {format_money(auto.value)} and cargo {format_money(cargo.value)} "
+            f"are below the {format_money(policy.min_auto_liability)} auto and "
+            f"{format_money(policy.min_cargo_limit)} cargo minimums."
         )
+        evidence_value = auto.extracted
+    elif auto_below:
+        assert auto is not None
+        details = (
+            f"Auto liability {format_money(auto.value)} is below the "
+            f"{format_money(policy.min_auto_liability)} minimum."
+        )
+        evidence_value = auto.extracted
+    elif cargo_below:
+        assert cargo is not None
+        details = (
+            f"Cargo {format_money(cargo.value)} is below the "
+            f"{format_money(policy.min_cargo_limit)} minimum."
+        )
+        evidence_value = cargo.extracted
+    else:
+        return flags
+
+    flags.append(
+        make_flag(
+            "insurance_below_minimum",
+            rule_id="insurance.minimum_limits",
+            details=details,
+            evidence=evidence_for(evidence_value, "certificate_of_insurance"),
+        )
+    )
     return flags
 
 
-def validate_authority(documents: Documents, as_of: date) -> list[RuleFlag]:
-    document = documents.get("mc_authority")
-    if document is None:
+def validate_authority(
+    documents: Documents,
+    as_of: date,
+    policy: RulePolicy,
+) -> list[RuleFlag]:
+    if documents.get("mc_authority") is None:
         return []
 
     status_value = documents.field("mc_authority", "authority_status")
@@ -528,23 +577,21 @@ def validate_authority(documents: Documents, as_of: date) -> list[RuleFlag]:
             )
         ]
 
-    granted_value = documents.field("mc_authority", "authority_granted_on")
-    granted_on = parse_date(granted_value.value if granted_value else None)
+    granted = date_value(documents, "mc_authority", "authority_granted_on")
     if (
         status == "active"
-        and granted_value is not None
-        and granted_on is not None
-        and granted_on > as_of - timedelta(days=183)
+        and granted is not None
+        and granted.value > as_of - timedelta(days=policy.authority_min_age_days)
     ):
         return [
             make_flag(
                 "authority_young",
                 rule_id="authority.age",
                 details=(
-                    f"Authority was granted on {granted_on.isoformat()}, less than six months "
+                    f"Authority was granted on {granted.value.isoformat()}, less than six months "
                     f"before {as_of.isoformat()}."
                 ),
-                evidence=evidence_for(granted_value, "mc_authority"),
+                evidence=evidence_for(granted.extracted, "mc_authority"),
             )
         ]
     return []
@@ -571,7 +618,7 @@ def validate_watchlist(packet: CasePacket) -> list[RuleFlag]:
 
 @dataclass(frozen=True)
 class MissingDocument:
-    document_type: str
+    document_type: KnownDocumentType
     details: str
     document: DocumentExtraction | None
 
@@ -580,7 +627,7 @@ def find_missing_documents(
     extraction: CaseExtraction,
     packet: CasePacket,
 ) -> list[MissingDocument]:
-    required = ONBOARDING_DOCUMENTS if packet.case_type == "onboarding" else INVOICE_DOCUMENTS
+    required = set(ONBOARDING_DOCUMENTS if packet.case_type == "onboarding" else INVOICE_DOCUMENTS)
     expected_by_id = packet.document_type_by_id
     available: set[str] = set()
     unreadable: dict[str, DocumentExtraction] = {}
@@ -589,7 +636,7 @@ def find_missing_documents(
         document_type = document.classification.document_type
         if document_type == "unknown":
             document_type = expected_by_id.get(document.classification.document_id)
-        if document_type not in required:
+        if document_type is None or document_type not in required:
             continue
         if document.status == "extracted" and document.classification.document_type != "unknown":
             available.add(document_type)
@@ -635,18 +682,20 @@ def validate_required_documents(
 
 
 __all__ = [
+    "IDENTITY_CHECKS",
+    "IdentityCheck",
     "MissingDocument",
     "find_missing_documents",
     "validate_authority",
     "validate_bank",
     "validate_duplicates",
     "validate_identity",
-    "validate_insurance",
     "validate_injection",
+    "validate_insurance",
     "validate_invoice_arithmetic",
     "validate_optional_fields",
     "validate_pod",
-    "validate_round_dollar",
     "validate_required_documents",
+    "validate_round_dollar",
     "validate_watchlist",
 ]
