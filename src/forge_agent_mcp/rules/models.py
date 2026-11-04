@@ -14,7 +14,6 @@ from ..corpus.vocab import (
     Severity,
     StrictModel,
 )
-from ..extraction.models import ExtractionStatus
 
 FlagCode = Literal[
     "watchlist_hit",

@@ -17,13 +17,13 @@ from .validators import (
     validate_bank,
     validate_duplicates,
     validate_identity,
-    validate_insurance,
     validate_injection,
+    validate_insurance,
     validate_invoice_arithmetic,
     validate_optional_fields,
     validate_pod,
-    validate_round_dollar,
     validate_required_documents,
+    validate_round_dollar,
     validate_watchlist,
 )
 from .values import Documents
@@ -62,10 +62,17 @@ def validate(extraction: CaseExtraction, packet: CasePacket) -> list[RuleFlag]:
 
 
 def _ordered_conditions(flags: list[RuleFlag]) -> list[str]:
+    def priority(flag: RuleFlag) -> int:
+        if flag.code == "missing_document":
+            return 0
+        if flag.code == "document_instruction_injection":
+            return 1
+        return 2
+
     ordered = sorted(
         flags,
         key=lambda flag: (
-            0 if flag.code == "missing_document" else 1,
+            priority(flag),
             FLAG_ORDER.get(flag.code, len(FLAG_ORDER)),
         ),
     )
@@ -185,13 +192,15 @@ def _evidence_gaps(extraction: CaseExtraction, packet: CasePacket) -> list[str]:
 
 def _summary(case_id: str, flags: list[RuleFlag], recommendation: RecommendationResult) -> str:
     if not flags:
-        finding = "No rule flags."
-    else:
-        finding = f"{len(flags)} rule flag(s): " + ", ".join(flag.code for flag in flags) + "."
+        return (
+            f"{case_id}: {recommendation.recommendation} "
+            f"(decision {recommendation.decision}). {recommendation.rationale}"
+        )
+    codes = ", ".join(flag.code for flag in flags)
     return (
-        f"{case_id}: {recommendation.recommendation} "
-        f"(decision {recommendation.decision}). {finding} {recommendation.rationale}"
-    ).strip()
+        f"{case_id}: {recommendation.recommendation} (decision {recommendation.decision}). "
+        f"{len(flags)} rule flag(s): {codes}. {recommendation.rationale}"
+    )
 
 
 def review(extraction: CaseExtraction, packet: CasePacket) -> CaseReview:

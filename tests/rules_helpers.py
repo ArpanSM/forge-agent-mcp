@@ -24,6 +24,24 @@ def review_corpus_case(generated_corpus, case_id: str) -> CaseReview:
     return build_review(result.root, case_id)
 
 
+def drop_field(
+    extraction: CaseExtraction,
+    document_type: str,
+    key: str,
+) -> CaseExtraction:
+    """Return a copy with one extracted field removed."""
+
+    documents = []
+    for document in extraction.documents:
+        if document.classification.document_type != document_type:
+            documents.append(document)
+            continue
+        fields = dict(document.fields)
+        fields.pop(key, None)
+        documents.append(document.model_copy(update={"fields": fields}))
+    return extraction.model_copy(update={"documents": documents})
+
+
 def replace_field_value(
     extraction: CaseExtraction,
     document_type: str,
@@ -46,9 +64,7 @@ def replace_field_value(
                         key: extracted.model_copy(
                             update={
                                 "value": value,
-                                "citation": extracted.citation.model_copy(
-                                    update={"quote": value}
-                                ),
+                                "citation": extracted.citation.model_copy(update={"quote": value}),
                             }
                         ),
                     }

@@ -200,7 +200,8 @@ def validate_duplicates(documents: Documents, packet: CasePacket) -> list[RuleFl
         (
             (index, prior)
             for index, prior in enumerate(record.invoices)
-            if current_number is not None and prior.invoice_number.strip().casefold() == current_number
+            if current_number is not None
+            and prior.invoice_number.strip().casefold() == current_number
         ),
         None,
     )
@@ -348,6 +349,7 @@ def validate_injection(extraction: CaseExtraction) -> list[RuleFlag]:
             if not any(pattern.search(text) for pattern in INJECTION_PATTERNS):
                 continue
             location = _injection_location(document_type)
+            evidence = evidence_for(extracted, document_type).model_copy(update={"quote": None})
             flags.append(
                 make_flag(
                     "document_instruction_injection",
@@ -356,7 +358,7 @@ def validate_injection(extraction: CaseExtraction) -> list[RuleFlag]:
                         f"Document text addressed to an AI agent was detected in the {location}; "
                         "the instruction is ignored and the text is quarantined."
                     ),
-                    evidence=evidence_for(extracted, document_type),
+                    evidence=evidence,
                 )
             )
             break

@@ -19,6 +19,7 @@ make test            # offline pytest suite; live tests are marked and deselecte
 make test-live       # opt-in live model tests (sets FORGE_LIVE_MODEL=1)
 make lint            # ruff
 make extract CASE=case_onb_ridgeline   # classify documents and print cited fields
+make review CASE=case_inv_northgate    # flags, severity, recommendation and evidence
 make gateway         # FastMCP Streamable HTTP server on 127.0.0.1:8765/mcp
 make gateway-client  # list tools, read a case, show a scoped 403
 make gateway-demo    # in-process server + client demo
@@ -64,6 +65,20 @@ so extraction never invents a value. Reports are written to
 `data/extractions/<case>.json` for the later rule engine and gateway. The live model test
 is marked `live`, excluded from `make test`, and additionally requires
 `FORGE_LIVE_MODEL=1`; `make test-live` sets that flag.
+
+## Deterministic rule engine
+
+`make review` extracts a case with the offline deterministic parser, loads the typed
+structured records (watchlist, prior invoices, UCC and broker bond), runs every validator
+and prints the flags with their rule id and citation. The engine is pure Python and never
+calls a model or the network.
+
+Hard stops (watchlist hit, identity mismatch, inactive authority, expired or underinsured
+policy, duplicate invoice) always decline or escalate. Two or more high flags hold the
+case; one high flag is a conditional approval, except missing documents which request
+documents; medium flags add conditions; low flags approve with clarification. Text aimed at
+an AI agent is flagged as `document_instruction_injection`, quoted nowhere, ignored, and
+held for manual review; it can never override a hard stop.
 
 ## MCP gateway
 

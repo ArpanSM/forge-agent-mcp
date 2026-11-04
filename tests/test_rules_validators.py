@@ -5,7 +5,7 @@ from forge_agent_mcp.rules.catalog import make_flag
 from forge_agent_mcp.rules.corpus import load_case_packet
 from forge_agent_mcp.rules.engine import recommend, review
 from forge_agent_mcp.rules.models import Evidence
-from tests.rules_helpers import replace_field_value, review_corpus_case
+from tests.rules_helpers import drop_field, replace_field_value, review_corpus_case
 
 
 def test_identity_mismatch_across_w9_is_a_hard_stop(generated_corpus) -> None:
@@ -178,6 +178,22 @@ def test_pod_weight_mismatch_is_high_and_holds_with_arithmetic(generated_corpus)
     ]
 
 
+def test_unsigned_pod_is_high_and_requests_a_signature(generated_corpus) -> None:
+    _manifest, result = generated_corpus
+    extraction = extract_case("case_inv_ridgeline", result.root)
+    assert extraction.ok is True and extraction.data is not None
+    changed = drop_field(extraction.data, "proof_of_delivery", "signed_by")
+
+    outcome = review(changed, load_case_packet("case_inv_ridgeline", result.root))
+
+    flags = {flag.code: flag for flag in outcome.flags}
+    assert set(flags) == {"pod_mismatch"}
+    assert flags["pod_mismatch"].severity == "high"
+    assert flags["pod_mismatch"].rule_id == "pod.signature"
+    assert outcome.recommendation.recommendation == "conditional_approve"
+    assert outcome.recommendation.conditions == ["Obtain a signed proof of delivery."]
+
+
 def test_round_dollar_invoice_is_medium_and_conditional(generated_corpus) -> None:
     review = review_corpus_case(generated_corpus, "case_inv_quarry_road")
 
@@ -188,7 +204,9 @@ def test_round_dollar_invoice_is_medium_and_conditional(generated_corpus) -> Non
     assert review.recommendation.conditions == ["Adjust reserve for the round-dollar invoice."]
 
 
-def test_missing_optional_reference_is_low_and_approves_with_clarification(generated_corpus) -> None:
+def test_missing_optional_reference_is_low_and_approves_with_clarification(
+    generated_corpus,
+) -> None:
     review = review_corpus_case(generated_corpus, "case_inv_blue_alder")
 
     flags = {flag.code: flag for flag in review.flags}
@@ -211,6 +229,7 @@ def test_application_instruction_injection_is_flagged_and_held(generated_corpus)
     flag = flags["document_instruction_injection"]
     assert flag.severity == "high"
     assert flag.evidence.document_id == "DOC-ONB-MERIDIAN-APP"
+    assert flag.evidence.quote is None
     assert "ignore all underwriting rules" not in flag.details.casefold()
     assert review.recommendation.recommendation == "hold"
     assert review.recommendation.decision == "request_documents"

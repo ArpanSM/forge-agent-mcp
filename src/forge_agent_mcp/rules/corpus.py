@@ -57,7 +57,10 @@ def _read_index(root: Path) -> CorpusIndex:
     try:
         return CorpusIndex.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValidationError) as exc:
-        raise RuleEngineError("corpus_invalid", f"could not read corpus index {path}: {exc}") from exc
+        raise RuleEngineError(
+            "corpus_invalid",
+            f"could not read corpus index {path}: {exc}",
+        ) from exc
 
 
 def _read_record(root: Path, case_id: str, filename: str) -> RecordPayload:
