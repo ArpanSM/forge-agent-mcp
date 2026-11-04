@@ -3,15 +3,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .errors import CorpusError
 from .manifest import Carrier, Case, Manifest
+from .models import (
+    BrokerBondRecord,
+    PriorInvoiceLine,
+    PriorInvoiceRecord,
+    RecordPayload,
+    UccFilingRecord,
+    WatchlistRecord,
+)
 from .pdf import DocumentSpec, FieldSpec
 
 LETTER_DATE = "2026-10-29"
 W9_SIGNED_ON = "2026-10-28"
 BOL_SIGNED_BY = "J. Ramos"
+
+RECORD_CODES = {
+    "ucc_filing": "UCC",
+    "watchlist": "WATCH",
+    "prior_invoices": "PRIOR",
+    "broker_bond": "BOND",
+}
 
 
 @dataclass(frozen=True)
@@ -20,7 +34,7 @@ class RecordSpec:
     record_type: str
     title: str
     filename: str
-    data: dict[str, Any]
+    data: RecordPayload
 
 
 def format_money(value: int) -> str:
@@ -51,13 +65,26 @@ def build_documents(manifest: Manifest, carrier: Carrier, case: Case) -> list[Do
                 title=definition.title,
                 carrier_name=carrier.legal_name,
                 filename=f"documents/{definition.code}.pdf",
-                fields=tuple(_fields_for(document_type, carrier, case)),
+                fields=tuple(
+                    _fields_for(
+                        document_type,
+                        carrier,
+                        case,
+                        factor_name=manifest.factor.name,
+                    )
+                ),
             )
         )
     return documents
 
 
-def _fields_for(document_type: str, carrier: Carrier, case: Case) -> list[FieldSpec]:
+def _fields_for(
+    document_type: str,
+    carrier: Carrier,
+    case: Case,
+    *,
+    factor_name: str,
+) -> list[FieldSpec]:
     if document_type == "application_kyc":
         fields = [
             _field("legal_name", "Legal name", carrier.legal_name),
@@ -119,11 +146,7 @@ def _fields_for(document_type: str, carrier: Carrier, case: Case) -> list[FieldS
                 "General liability limit",
                 format_money(carrier.insurance.general_liability_limit),
             ),
-            _field(
-                "effective_on",
-                "Effective on",
-                carrier.insurance.effective_on.isoformat(),
-            ),
+            _field("effective_on", "Effective on", carrier.insurance.effective_on.isoformat()),
             _field("expires_on", "Expires on", carrier.insurance.expires_on.isoformat()),
             _field(
                 "certificate_holder",
@@ -143,13 +166,9 @@ def _fields_for(document_type: str, carrier: Carrier, case: Case) -> list[FieldS
             _field("bank_name", "Bank", carrier.bank.bank_name),
             _field("routing_number", "Routing number", carrier.bank.routing_number),
             _field("account_number", "Account number", carrier.bank.account_number),
-            _field(
-                "account_opened_on",
-                "Account opened on",
-                carrier.bank.opened_on.isoformat(),
-            ),
+            _field("account_opened_on", "Account opened on", carrier.bank.opened_on.isoformat()),
             _field("letter_date", "Letter date", LETTER_DATE),
-            _field("signed_by", "Signed by", "Branch Manager, Northwind Test Bank"),
+            _field("signed_by", "Signed by", f"Branch Manager, {carrier.bank.bank_name}"),
         ]
 
     if document_type == "mc_authority":
@@ -242,7 +261,7 @@ def _fields_for(document_type: str, carrier: Carrier, case: Case) -> list[FieldS
 
     if document_type == "invoice":
         invoice = carrier.invoice
-        return [
+        fields = [
             _field("invoice_number", "Invoice number", invoice.invoice_number),
             _field("invoice_date", "Invoice date", invoice.invoice_date.isoformat()),
             _field("due_date", "Due date", invoice.due_date.isoformat()),
@@ -253,55 +272,65 @@ def _fields_for(document_type: str, carrier: Carrier, case: Case) -> list[FieldS
             _field("fuel_surcharge", "Fuel surcharge", format_money(invoice.fuel_surcharge)),
             _field("accessorials", "Accessorials", format_money(invoice.accessorials)),
             _field("total", "Total", format_money(invoice.total)),
-            _field("remit_to", "Remit to", "Northwind Freight Capital"),
+            _field("remit_to", "Remit to", factor_name),
         ]
+        if invoice.reference_number:
+            fields.append(_field("reference_number", "Reference", invoice.reference_number))
+        return fields
 
     raise CorpusError(f"case {case.case_id}: unknown document type {document_type!r}")
 
 
-def build_records(manifest: Manifest, carrier: Carrier, case: Case) -> list[RecordSpec]:
+def build_records(
+    manifest: Manifest,
+    carrier: Carrier,
+    case: Case,
+    *,
+    invoice_content_hash: str | None = None,
+) -> list[RecordSpec]:
     slug = _case_slug(case.case_id)
+    base = {"synthetic": True, "carrier_id": carrier.carrier_id}
+
+    def _prior_invoices(record_id: str) -> PriorInvoiceRecord:
+        invoices: list[PriorInvoiceLine] = []
+        for prior in carrier.prior_invoices:
+            if prior.duplicate_current_invoice_hash:
+                if invoice_content_hash is None:
+                    raise CorpusError(
+                        f"case {case.case_id}: duplicate hash requires the invoice content hash"
+                    )
+                prior = prior.model_copy(update={"document_hash": invoice_content_hash})
+            invoices.append(
+                PriorInvoiceLine.model_validate(
+                    prior.model_dump(exclude={"duplicate_current_invoice_hash"})
+                )
+            )
+        return PriorInvoiceRecord(record_id=record_id, **base, invoices=invoices)
+
+    builders = {
+        "ucc_filing": lambda record_id: UccFilingRecord(
+            record_id=record_id, **base, **carrier.ucc.model_dump()
+        ),
+        "watchlist": lambda record_id: WatchlistRecord(
+            record_id=record_id, **base, **carrier.watchlist.model_dump()
+        ),
+        "prior_invoices": _prior_invoices,
+        "broker_bond": lambda record_id: BrokerBondRecord(
+            record_id=record_id, **base, **carrier.broker_bond.model_dump()
+        ),
+    }
+
     records: list[RecordSpec] = []
     for record_type in case.structured_records:
         definition = manifest.record_types[record_type]
-        if record_type == "ucc_filing":
-            data = {
-                "record_id": f"REC-{slug}-UCC",
-                "record_type": record_type,
-                "synthetic": True,
-                "carrier_id": carrier.carrier_id,
-                **carrier.ucc.model_dump(mode="json"),
-            }
-        elif record_type == "watchlist":
-            data = {
-                "record_id": f"REC-{slug}-WATCH",
-                "record_type": record_type,
-                "synthetic": True,
-                "carrier_id": carrier.carrier_id,
-                **carrier.watchlist.model_dump(mode="json"),
-            }
-        elif record_type == "prior_invoices":
-            data = {
-                "record_id": f"REC-{slug}-PRIOR",
-                "record_type": record_type,
-                "synthetic": True,
-                "carrier_id": carrier.carrier_id,
-                "invoices": [invoice.model_dump(mode="json") for invoice in carrier.prior_invoices],
-            }
-        elif record_type == "broker_bond":
-            data = {
-                "record_id": f"REC-{slug}-BOND",
-                "record_type": record_type,
-                "synthetic": True,
-                "carrier_id": carrier.carrier_id,
-                **carrier.broker_bond.model_dump(mode="json"),
-            }
-        else:
+        builder = builders.get(record_type)
+        if builder is None:
             raise CorpusError(f"case {case.case_id}: unknown record type {record_type!r}")
-
+        record_id = f"REC-{slug}-{RECORD_CODES[record_type]}"
+        data = builder(record_id)
         records.append(
             RecordSpec(
-                record_id=str(data["record_id"]),
+                record_id=record_id,
                 record_type=record_type,
                 title=definition.title,
                 filename=f"structured/{record_type}.json",

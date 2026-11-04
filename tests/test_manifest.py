@@ -8,7 +8,12 @@ from typing import Any
 
 import pytest
 
-from forge_agent_mcp.corpus.manifest import ManifestError, load_manifest, validate_manifest
+from forge_agent_mcp.corpus.manifest import (
+    ARCHETYPE_FLAGS,
+    ManifestError,
+    load_manifest,
+    validate_manifest,
+)
 
 MANIFEST_PATH = Path(__file__).resolve().parents[1] / "corpus" / "manifest.json"
 
@@ -43,9 +48,26 @@ def test_committed_manifest_has_the_fixed_corpus_shape() -> None:
     assert len({carrier.carrier_id for carrier in manifest.carriers}) == 8
 
 
-def test_committed_manifest_covers_every_required_hard_stop_and_eval_archetype() -> None:
+def test_held_out_split_is_carrier_disjoint() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    eval_carriers = {case.carrier_id for case in manifest.cases if case.split == "eval"}
+    held_out_carriers = {case.carrier_id for case in manifest.cases if case.split == "held_out"}
+
+    assert len(eval_carriers) == 6
+    assert len(held_out_carriers) == 2
+    assert not eval_carriers & held_out_carriers
+
+
+def test_committed_manifest_covers_every_required_archetype() -> None:
     manifest = load_manifest(MANIFEST_PATH)
     flags_by_code = {flag.code: flag for flag in manifest.flag_catalog}
+    eval_archetypes = {
+        archetype
+        for case in manifest.cases
+        if case.split == "eval"
+        for archetype in case.archetypes
+    }
+    all_archetypes = {archetype for case in manifest.cases for archetype in case.archetypes}
 
     hard_stop_codes = {code for code, flag in flags_by_code.items() if flag.severity == "hard_stop"}
     assert {
@@ -57,105 +79,125 @@ def test_committed_manifest_covers_every_required_hard_stop_and_eval_archetype()
         "duplicate_invoice",
     } <= hard_stop_codes
 
-    archetypes = {archetype for case in manifest.cases for archetype in case.archetypes}
-    assert set(manifest.required_hard_stop_archetypes) <= archetypes
-    assert set(manifest.required_eval_archetypes) <= archetypes
+    assert set(ARCHETYPE_FLAGS) <= all_archetypes
+    assert set(manifest.required_hard_stop_archetypes) <= eval_archetypes
+    assert set(manifest.required_eval_archetypes) <= eval_archetypes
 
 
-def test_validator_rejects_a_missing_case() -> None:
-    raw = _raw_manifest()
+def _drop_case(raw: dict[str, Any]) -> None:
     raw["cases"] = [case for case in raw["cases"] if case["case_id"] != "case_inv_meridian"]
 
-    with pytest.raises(ManifestError, match="expected 16 cases"):
-        validate_manifest(raw)
+
+def _unknown_flag(raw: dict[str, Any]) -> None:
+    _case(raw, "case_onb_cedar_pine")["expected_flags"].append("made_up_flag")
 
 
-def test_validator_rejects_an_unknown_flag_label() -> None:
-    raw = _raw_manifest()
-    _case(raw, "case_onb_cedar_pine")["expected_flags"] = ["insurance_expired", "made_up_flag"]
-
-    with pytest.raises(ManifestError, match="unknown flag code"):
-        validate_manifest(raw)
-
-
-def test_validator_rejects_a_malformed_severity() -> None:
-    raw = _raw_manifest()
+def _malformed_severity(raw: dict[str, Any]) -> None:
     raw["flag_catalog"][0]["severity"] = "critical"
 
-    with pytest.raises(ManifestError, match="severity"):
-        validate_manifest(raw)
+
+def _unknown_hard_stop_archetype(raw: dict[str, Any]) -> None:
+    raw["required_hard_stop_archetypes"].append("made_up_archetype")
 
 
-def test_validator_rejects_an_uncovered_hard_stop_archetype() -> None:
-    raw = _raw_manifest()
-    raw["required_hard_stop_archetypes"].append("authority_young")
+def _uncovered_hard_stop_archetype(raw: dict[str, Any]) -> None:
+    case = _case(raw, "case_onb_northgate")
+    case["archetypes"] = ["clean"]
+    case["expected_flags"] = []
+    case["category"] = "clean"
+    case["expected_recommendation"] = "approve"
+    case["expected_decision"] = "approve"
+    case["expected_conditions"] = []
 
-    with pytest.raises(ManifestError, match="authority_young"):
-        validate_manifest(raw)
+
+def _uncovered_medium_archetype(raw: dict[str, Any]) -> None:
+    case = _case(raw, "case_onb_quarry_road")
+    case["archetypes"] = ["clean"]
+    case["expected_flags"] = []
+    case["category"] = "clean"
+    case["expected_recommendation"] = "approve"
+    case["expected_decision"] = "approve"
+    case["expected_conditions"] = []
 
 
-def test_validator_rejects_a_required_hard_stop_archetype_with_no_case() -> None:
-    raw = _raw_manifest()
-    case = _case(raw, "case_onb_harborline")
-    case["archetypes"] = ["identity_mismatch"]
-    case["expected_flags"] = ["identity_mismatch"]
+def _downgraded_hard_stop_flag(raw: dict[str, Any]) -> None:
+    flag = next(flag for flag in raw["flag_catalog"] if flag["code"] == "watchlist_hit")
+    flag["severity"] = "high"
+
+
+def _hard_stop_with_injection(raw: dict[str, Any]) -> None:
+    case = _case(raw, "case_onb_cedar_pine")
+    case["archetypes"].append("prompt_injection")
+    case["expected_flags"].append("document_instruction_injection")
+    case["category"] = "injection"
+    case["expected_recommendation"] = "hold"
+    case["expected_decision"] = "request_documents"
+    case["expected_conditions"] = ["Review the packet manually."]
+
+
+def _hard_stop_approved(raw: dict[str, Any]) -> None:
+    case = _case(raw, "case_onb_cedar_pine")
+    case["expected_recommendation"] = "approve"
+    case["expected_decision"] = "approve"
+
+
+def _eval_distribution_mismatch(raw: dict[str, Any]) -> None:
+    raw["eval_distribution"]["onboarding"]["clean"] = 2
+
+
+def _missing_invoice_document(raw: dict[str, Any]) -> None:
+    _case(raw, "case_inv_ridgeline")["documents"].remove("proof_of_delivery")
+
+
+def _missing_onboarding_document(raw: dict[str, Any]) -> None:
+    case = _case(raw, "case_onb_ridgeline")
+    case["documents"].remove("certificate_of_insurance")
+
+
+def _unknown_carrier(raw: dict[str, Any]) -> None:
+    _case(raw, "case_onb_ridgeline")["carrier_id"] = "car_does_not_exist"
+
+
+def _archetype_without_flag(raw: dict[str, Any]) -> None:
+    case = _case(raw, "case_onb_northgate")
+    case["expected_flags"] = []
     case["expected_recommendation"] = "decline"
     case["expected_decision"] = "decline"
     case["expected_conditions"] = []
 
-    with pytest.raises(ManifestError, match="watchlist_hit.*not covered"):
-        validate_manifest(raw)
+
+def _held_out_not_disjoint(raw: dict[str, Any]) -> None:
+    _case(raw, "case_onb_blue_alder")["split"] = "eval"
 
 
-def test_validator_rejects_an_eval_distribution_that_does_not_match_cases() -> None:
+def _required_hard_stop_not_eval(raw: dict[str, Any]) -> None:
+    _case(raw, "case_onb_sagebrush")["split"] = "held_out"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (_drop_case, "expected 16 cases"),
+        (_unknown_flag, "unknown flag code"),
+        (_malformed_severity, "severity"),
+        (_unknown_hard_stop_archetype, "made_up_archetype"),
+        (_uncovered_hard_stop_archetype, "watchlist_hit.*not covered"),
+        (_uncovered_medium_archetype, "authority_young.*not covered"),
+        (_downgraded_hard_stop_flag, "downgraded"),
+        (_hard_stop_with_injection, "hard stop requires"),
+        (_hard_stop_approved, "hard stop requires"),
+        (_eval_distribution_mismatch, "eval distribution"),
+        (_missing_invoice_document, "missing_document"),
+        (_missing_onboarding_document, "missing_document"),
+        (_unknown_carrier, "unknown carrier"),
+        (_archetype_without_flag, "no matching flag"),
+        (_held_out_not_disjoint, "carrier-disjoint"),
+        (_required_hard_stop_not_eval, "not in the eval split"),
+    ],
+)
+def test_validator_rejects_malformed_manifests(mutate, match) -> None:
     raw = _raw_manifest()
-    raw["eval_distribution"]["onboarding"]["clean"] = 3
+    mutate(raw)
 
-    with pytest.raises(ManifestError, match="eval distribution"):
-        validate_manifest(raw)
-
-
-def test_validator_rejects_a_recommendation_that_contradicts_a_hard_stop() -> None:
-    raw = _raw_manifest()
-    _case(raw, "case_onb_cedar_pine")["expected_recommendation"] = "approve"
-    _case(raw, "case_onb_cedar_pine")["expected_decision"] = "approve"
-
-    with pytest.raises(ManifestError, match="recommendation"):
-        validate_manifest(raw)
-
-
-def test_validator_rejects_a_missing_invoice_document_without_a_missing_document_label() -> None:
-    raw = _raw_manifest()
-    _case(raw, "case_inv_ridgeline")["documents"].remove("proof_of_delivery")
-
-    with pytest.raises(ManifestError, match="missing_document"):
-        validate_manifest(raw)
-
-
-def test_validator_rejects_an_archetype_without_its_flag() -> None:
-    raw = _raw_manifest()
-    case = _case(raw, "case_onb_northgate")
-    case["expected_flags"] = []
-    case["expected_recommendation"] = "hold"
-    case["expected_conditions"] = ["Review the packet manually."]
-
-    with pytest.raises(ManifestError, match="prompt_injection.*no matching flag"):
-        validate_manifest(raw)
-
-
-def test_validator_rejects_an_unknown_carrier_reference() -> None:
-    raw = _raw_manifest()
-    _case(raw, "case_onb_ridgeline")["carrier_id"] = "car_does_not_exist"
-
-    with pytest.raises(ManifestError, match="unknown carrier"):
-        validate_manifest(raw)
-
-
-def test_validator_rejects_a_held_out_hard_stop_that_is_not_multi_flag() -> None:
-    raw = _raw_manifest()
-    case = _case(raw, "case_onb_quarry_road")
-    case["expected_flags"] = ["authority_inactive"]
-    case["archetypes"] = ["inactive_authority"]
-
-    with pytest.raises(ManifestError, match="multi-flag"):
+    with pytest.raises(ManifestError, match=match):
         validate_manifest(raw)

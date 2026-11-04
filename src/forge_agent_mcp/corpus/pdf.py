@@ -156,7 +156,7 @@ def render_pdf(
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter, invariant=1)
     pdf.setTitle(spec.document_id)
-    pdf.setAuthor("Northwind Freight Capital (synthetic)")
+    pdf.setAuthor(f"{factor_name} (synthetic)")
     pdf.setSubject("SYNTHETIC document - not a real record")
     pdf.setCreator("forge-agent-mcp corpus generator")
     pdf.setKeywords("synthetic, freight, underwriting")

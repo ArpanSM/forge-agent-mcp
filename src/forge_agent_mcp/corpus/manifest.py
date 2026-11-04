@@ -8,27 +8,18 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import Field, ValidationError
 
-CaseType = Literal["onboarding", "invoice"]
-Split = Literal["eval", "held_out"]
-Category = Literal["clean", "hard_stop", "high", "medium", "low", "injection"]
-Severity = Literal["hard_stop", "high", "medium", "low"]
-Recommendation = Literal[
-    "approve",
-    "conditional_approve",
-    "hold",
-    "request_documents",
-    "decline",
-    "escalate",
-]
-Decision = Literal["approve", "conditional_approve", "decline", "request_documents"]
-DecisionEffect = Literal[
-    "decline_or_escalate",
-    "hold_or_condition",
-    "condition_or_reserve",
-    "approve_with_clarification",
-]
+from .vocab import (
+    CaseType,
+    Category,
+    Decision,
+    DecisionEffect,
+    Recommendation,
+    Severity,
+    Split,
+    StrictModel,
+)
 
 ONBOARDING_DOCUMENTS = {
     "application_kyc",
@@ -54,6 +45,7 @@ HARD_STOP_ARCHETYPE_FLAGS: dict[str, set[str]] = {
     "watchlist_hit": {"watchlist_hit"},
     "inactive_authority": {"authority_inactive"},
     "duplicate_invoice": {"duplicate_invoice"},
+    "duplicate_invoice_hash": {"duplicate_invoice"},
 }
 
 ARCHETYPE_FLAGS: dict[str, set[str]] = {
@@ -66,7 +58,12 @@ ARCHETYPE_FLAGS: dict[str, set[str]] = {
     },
     "missing_document": {"missing_document"},
     "prompt_injection": {"document_instruction_injection"},
+    "authority_young": {"authority_young"},
+    "round_dollar_invoice": {"round_dollar_invoice"},
+    "missing_optional_field": {"missing_optional_field"},
 }
+
+REQUIRED_HARD_STOP_FLAG_CODES = set().union(*HARD_STOP_ARCHETYPE_FLAGS.values())
 
 
 class ManifestError(ValueError):
@@ -75,10 +72,6 @@ class ManifestError(ValueError):
     def __init__(self, errors: str | list[str]) -> None:
         self.errors = [errors] if isinstance(errors, str) else list(errors)
         super().__init__("manifest invalid: " + "; ".join(self.errors))
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
 
 
 class Factor(StrictModel):
@@ -191,6 +184,7 @@ class InvoiceData(StrictModel):
     fuel_surcharge: int = Field(ge=0)
     accessorials: int = Field(ge=0)
     total: int = Field(ge=0)
+    reference_number: str | None = None
 
 
 class Pod(StrictModel):
@@ -207,6 +201,7 @@ class PriorInvoice(StrictModel):
     invoice_date: date
     amount: int = Field(ge=0)
     document_hash: str | None = None
+    duplicate_current_invoice_hash: bool = False
 
 
 class Carrier(StrictModel):
@@ -326,24 +321,34 @@ def _unique(items: list[str], field: str, owner: str, errors: list[str]) -> None
         errors.append(f"{owner}: duplicate {field} values {sorted(duplicates)}")
 
 
+def missing_required_documents(case: Case) -> list[str]:
+    required = ONBOARDING_DOCUMENTS if case.case_type == "onboarding" else INVOICE_DOCUMENTS
+    return sorted(required - set(case.documents))
+
+
 def _derive_category(case: Case, flags: dict[str, FlagDefinition]) -> Category:
+    severities = {flags[code].severity for code in case.expected_flags if code in flags}
+    if "hard_stop" in severities:
+        return "hard_stop"
     if case.has_injection:
         return "injection"
-    severities = {flags[code].severity for code in case.expected_flags if code in flags}
-    for severity in ("hard_stop", "high", "medium", "low"):
-        if severity in severities:
-            return severity  # type: ignore[return-value]
+    if "high" in severities:
+        return "high"
+    if "medium" in severities:
+        return "medium"
+    if "low" in severities:
+        return "low"
     return "clean"
 
 
 def _derive_recommendation(case: Case, flags: dict[str, FlagDefinition]) -> Recommendation:
     definitions = [flags[code] for code in case.expected_flags if code in flags]
-    if case.has_injection:
-        return "hold"
     if any(flag.severity == "hard_stop" for flag in definitions):
         if "watchlist_hit" in case.expected_flags:
             return "escalate"
         return "decline"
+    if case.has_injection:
+        return "hold"
     if "missing_document" in case.expected_flags:
         return "request_documents"
     high_count = sum(flag.severity == "high" for flag in definitions)
@@ -387,26 +392,17 @@ def _expected_distribution(distribution: Distribution) -> dict[str, dict[str, in
 def _validate_documents(case: Case, manifest: Manifest, errors: list[str]) -> None:
     required = ONBOARDING_DOCUMENTS if case.case_type == "onboarding" else INVOICE_DOCUMENTS
     actual = set(case.documents)
-    missing = required - actual
+    missing = set(missing_required_documents(case))
     extra = actual - required
 
-    allowed_missing: set[str] = set()
-    if (
-        case.case_type == "invoice"
-        and "missing_document" in case.archetypes
-        and "missing_document" in case.expected_flags
-    ):
-        allowed_missing = {"proof_of_delivery"}
-
-    if missing - allowed_missing:
-        errors.append(
-            f"case {case.case_id}: missing required documents {sorted(missing - allowed_missing)}"
-        )
     if extra:
         errors.append(f"case {case.case_id}: unknown documents {sorted(extra)}")
-    if "proof_of_delivery" in missing and "proof_of_delivery" not in allowed_missing:
+    if missing and not (
+        "missing_document" in case.archetypes and "missing_document" in case.expected_flags
+    ):
         errors.append(
-            f"case {case.case_id}: proof_of_delivery is missing without a missing_document label"
+            f"case {case.case_id}: missing required documents {sorted(missing)} "
+            "without a missing_document label"
         )
 
     for document_type in case.documents:
@@ -481,6 +477,22 @@ def validate_manifest(raw: dict[str, Any]) -> Manifest:
     flags_by_code = manifest.flag_by_code
     eval_cases = [case for case in manifest.cases if case.split == "eval"]
     held_out_cases = [case for case in manifest.cases if case.split == "held_out"]
+    eval_carrier_ids = {case.carrier_id for case in eval_cases}
+    held_out_carrier_ids = {case.carrier_id for case in held_out_cases}
+    overlap = eval_carrier_ids & held_out_carrier_ids
+    if overlap:
+        errors.append(
+            f"held-out split must be carrier-disjoint; overlapping carriers {sorted(overlap)}"
+        )
+
+    for code in sorted(REQUIRED_HARD_STOP_FLAG_CODES):
+        definition = flags_by_code.get(code)
+        if definition is None:
+            errors.append(f"required hard-stop flag {code!r} is missing from the catalog")
+        elif definition.severity != "hard_stop":
+            errors.append(
+                f"required hard-stop flag {code!r} is downgraded to {definition.severity!r}"
+            )
 
     for case in manifest.cases:
         _unique(case.archetypes, "archetype", f"case {case.case_id}", errors)
@@ -512,6 +524,15 @@ def validate_manifest(raw: dict[str, Any]) -> Manifest:
                 f"flags (derived {derived_category!r})"
             )
 
+        has_hard_stop = any(
+            flags_by_code[code].severity == "hard_stop" for code in case.expected_flags
+        )
+        if has_hard_stop and case.expected_recommendation not in {"decline", "escalate"}:
+            errors.append(
+                f"case {case.case_id}: hard stop requires decline or escalate, "
+                f"not {case.expected_recommendation!r}"
+            )
+
         derived_recommendation = _derive_recommendation(case, flags_by_code)
         if case.expected_recommendation != derived_recommendation:
             errors.append(
@@ -531,10 +552,6 @@ def validate_manifest(raw: dict[str, Any]) -> Manifest:
         ):
             errors.append(f"case {case.case_id}: {derived_recommendation} requires a condition")
 
-    for case in held_out_cases:
-        if case.category == "hard_stop" and len(case.expected_flags) < 2:
-            errors.append(f"case {case.case_id}: held-out hard-stop case must be multi-flag")
-
     actual_eval = _distribution_counts(eval_cases)
     expected_eval = _expected_distribution(manifest.eval_distribution)
     if actual_eval != expected_eval:
@@ -548,6 +565,12 @@ def validate_manifest(raw: dict[str, Any]) -> Manifest:
         )
 
     archetypes = {archetype for case in manifest.cases for archetype in case.archetypes}
+    eval_archetypes = {archetype for case in eval_cases for archetype in case.archetypes}
+
+    for archetype in ARCHETYPE_FLAGS:
+        if archetype not in archetypes:
+            errors.append(f"archetype {archetype!r} is not covered by any case")
+
     for archetype in manifest.required_hard_stop_archetypes:
         if archetype not in HARD_STOP_ARCHETYPE_FLAGS:
             errors.append(f"required hard-stop archetype {archetype!r} is unknown")
@@ -561,6 +584,8 @@ def validate_manifest(raw: dict[str, Any]) -> Manifest:
             errors.append(
                 f"required hard-stop archetype {archetype!r} is not covered by a hard-stop flag"
             )
+        if archetype not in eval_archetypes:
+            errors.append(f"required hard-stop archetype {archetype!r} is not in the eval split")
 
     for archetype in manifest.required_eval_archetypes:
         if archetype not in archetypes:

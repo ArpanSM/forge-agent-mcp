@@ -1,33 +1,30 @@
-"""Deterministic corpus generation and CLI."""
+"""Deterministic corpus generation."""
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .errors import CorpusError
 from .labels import build_flag_truths, derive_flags
-from .manifest import Manifest, ManifestError, load_manifest
+from .manifest import Manifest
 from .models import (
     CaseGroundTruth,
     CaseIndex,
+    CaseSummary,
     CorpusIndex,
     DocumentEntry,
     FieldTruth,
     RecordEntry,
+    RecordPayload,
     SplitCounts,
 )
 from .pdf import DocumentSpec, RenderedPdf, hash_bytes, render_pdf
 from .templates import RecordSpec, build_documents, build_records
-
-DEFAULT_MANIFEST = Path(__file__).resolve().parents[3] / "corpus" / "manifest.json"
-DEFAULT_OUTPUT = Path("data") / "corpus"
 
 
 @dataclass(frozen=True)
@@ -45,8 +42,9 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(_json_text(payload), encoding="utf-8")
 
 
-def _record_content_hash(data: dict[str, Any]) -> str:
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+def _record_content_hash(data: RecordPayload) -> str:
+    payload = data.model_dump(mode="json")
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -69,7 +67,7 @@ def _write_pdf(
 
 
 def _write_record(path: Path, spec: RecordSpec) -> RecordEntry:
-    content = _json_text(spec.data).encode("utf-8")
+    content = _json_text(spec.data.model_dump(mode="json")).encode("utf-8")
     path.write_bytes(content)
     return RecordEntry(
         record_id=spec.record_id,
@@ -132,9 +130,17 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
                 )
             )
 
-        record_specs = build_records(manifest, carrier, case)
+        invoice_hash = (
+            rendered_by_type["invoice"].content_hash if "invoice" in rendered_by_type else None
+        )
+        record_specs = build_records(
+            manifest,
+            carrier,
+            case,
+            invoice_content_hash=invoice_hash,
+        )
         record_entries: list[RecordEntry] = []
-        expected_records: dict[str, Any] = {}
+        expected_records: dict[str, RecordPayload] = {}
         record_ids: dict[str, str] = {}
         for record in record_specs:
             entry = _write_record(case_dir / record.filename, record)
@@ -142,10 +148,12 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
             expected_records[record.record_type] = record.data
             record_ids[record.record_type] = record.record_id
 
-        invoice_hash = (
-            rendered_by_type["invoice"].content_hash if "invoice" in rendered_by_type else None
+        derived_flags = derive_flags(
+            manifest,
+            carrier,
+            case,
+            invoice_content_hash=invoice_hash,
         )
-        derive_flags(manifest, carrier, case, invoice_content_hash=invoice_hash)
 
         expected_fields: list[FieldTruth] = []
         for spec in document_specs:
@@ -159,7 +167,7 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
                     )
                 )
 
-        truth = CaseGroundTruth(
+        summary = CaseSummary(
             case_id=case.case_id,
             case_type=case.case_type,
             carrier_id=case.carrier_id,
@@ -168,18 +176,22 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
             archetypes=case.archetypes,
             documents=document_entries,
             structured_records=record_entries,
+            expected_recommendation=case.expected_recommendation,
+            expected_decision=case.expected_decision,
+            expected_conditions=case.expected_conditions,
+        )
+        truth = CaseGroundTruth(
+            **summary.model_dump(),
             expected_fields=expected_fields,
             expected_records=expected_records,
             expected_flags=build_flag_truths(
                 manifest,
                 carrier,
                 case,
+                flag_codes=derived_flags,
                 field_citations=field_citations,
                 record_ids=record_ids,
             ),
-            expected_recommendation=case.expected_recommendation,
-            expected_decision=case.expected_decision,
-            expected_conditions=case.expected_conditions,
             notes=case.notes,
         )
         ground_truths[case.case_id] = truth
@@ -188,18 +200,8 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
 
         index_cases.append(
             CaseIndex(
-                case_id=case.case_id,
-                case_type=case.case_type,
-                carrier_id=case.carrier_id,
-                split=case.split,
-                category=case.category,
-                archetypes=case.archetypes,
-                documents=document_entries,
-                structured_records=record_entries,
-                expected_flags=case.expected_flags,
-                expected_recommendation=case.expected_recommendation,
-                expected_decision=case.expected_decision,
-                expected_conditions=case.expected_conditions,
+                **summary.model_dump(),
+                expected_flags=derived_flags,
                 ground_truth_file=ground_truth_file,
             )
         )
@@ -217,52 +219,3 @@ def generate_corpus(manifest: Manifest, output_dir: str | Path) -> GenerationRes
     )
     _write_json(root / "corpus.json", index.model_dump(mode="json"))
     return GenerationResult(root=root, index=index, cases=ground_truths)
-
-
-def generate_from_path(manifest_path: str | Path, output_dir: str | Path) -> GenerationResult:
-    return generate_corpus(load_manifest(manifest_path), output_dir)
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="python -m forge_agent_mcp.corpus",
-        description="Validate and generate the synthetic freight underwriting corpus.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    validate = subparsers.add_parser("validate", help="validate the committed manifest")
-    validate.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
-
-    generate = subparsers.add_parser("generate", help="generate PDFs and ground truth")
-    generate.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
-    generate.add_argument("--out", default=str(DEFAULT_OUTPUT))
-
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
-    try:
-        manifest = load_manifest(args.manifest)
-        if args.command == "validate":
-            print(f"manifest valid: {len(manifest.carriers)} carriers, {len(manifest.cases)} cases")
-            return 0
-
-        result = generate_corpus(manifest, args.out)
-        pdf_count = sum(len(case.documents) for case in result.index.cases)
-        record_count = sum(len(case.structured_records) for case in result.index.cases)
-        print(
-            f"generated {result.index.case_count} cases "
-            f"({result.index.split_counts.eval} eval, "
-            f"{result.index.split_counts.held_out} held out) in {result.root}"
-        )
-        print(f"  {pdf_count} PDFs, {record_count} structured records")
-        print(f"  index: {result.root / 'corpus.json'}")
-        return 0
-    except (ManifestError, CorpusError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
