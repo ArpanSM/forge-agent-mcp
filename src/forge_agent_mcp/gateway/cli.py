@@ -19,6 +19,7 @@ from .server import create_gateway
 from .store import GatewayStore
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parents[3] / "corpus" / "manifest.json"
+DEFAULT_DB = Path("data") / "gateway.db"
 
 
 def _issuer(settings: Settings) -> LocalTokenIssuer:
@@ -35,7 +36,7 @@ def _open_store(
     db_path: str | None,
     manifest_path: str | None,
 ) -> GatewayStore:
-    store = GatewayStore(db_path or settings.gateway_db_path)
+    store = GatewayStore(db_path or settings.gateway_db_path or DEFAULT_DB)
     store.initialize()
     store.seed_demo(
         load_manifest(manifest_path or DEFAULT_MANIFEST),

@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     gateway_issuer: str = "http://127.0.0.1:8765"
     gateway_audience: str = "forge-freight-gateway"
     gateway_jwt_secret: SecretStr = SecretStr("forge-local-dev-jwt-secret-at-least-32-bytes")
-    gateway_db_path: str = "data/gateway.db"
+    gateway_db_path: str | None = None
     gateway_tenant_id: str = "tenant_northwind"
     gateway_host: str = "127.0.0.1"
     gateway_port: int = 8765

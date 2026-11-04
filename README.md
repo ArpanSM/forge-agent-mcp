@@ -27,6 +27,18 @@ make gateway-demo    # in-process server + client demo
 If the system Python is externally managed, pass the flags your environment needs, for
 example `make install PIP_FLAGS="--user --break-system-packages"`.
 
+## Gateway auth
+
+Streamable HTTP is the security boundary: it verifies the local HS256 issuer, the exact
+audience, the global `freight:read` scope, each tool's write/approve scope and the tenant
+claim. Invalid or expired tokens get `401`; a scoped shortfall gets `403
+insufficient_scope` with `WWW-Authenticate`.
+
+**stdio skips auth and scopes.** It is a trusted local transport for a local client, not
+the scoped demo and not an authorization boundary. The server prints a startup warning
+when it runs over stdio; use HTTP to demonstrate scopes, tenant isolation and the 403
+challenge.
+
 The corpus manifest at [`corpus/manifest.json`](corpus/manifest.json) is the source of
 truth for the 8 carriers, 16 cases, document types, archetypes and the 12 + 4 eval/held-out
 split. Generated PDFs and ground truth are written to `data/corpus/` and are gitignored.
