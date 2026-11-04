@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Freight underwriting agent and MCP business-tool gateway (synthetic proof)"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
