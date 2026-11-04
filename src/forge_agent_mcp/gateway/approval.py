@@ -9,8 +9,6 @@ store enforces that atomically in the decision transaction.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 import uuid
 from collections.abc import Sequence
@@ -18,13 +16,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import jwt
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..corpus.vocab import Decision
+from .canonical import canonical_hash
 
 CONSOLE_ISSUER = "forge-console"
 APPROVAL_ALGORITHM = "HS256"
-DEFAULT_APPROVAL_SECRET = "forge-local-dev-approval-secret-at-least-32-bytes"
 MALFORMED_CODE = "approval_malformed"
 EXPIRED_CODE = "approval_expired"
 MISMATCH_CODE = "approval_mismatch"
@@ -55,6 +53,13 @@ class ApprovalClaims(BaseModel):
     iat: int
     jti: str = Field(min_length=1)
 
+    @field_validator("sub")
+    @classmethod
+    def _require_approver(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("approver must not be blank")
+        return value
+
 
 def decision_payload(
     *, case_id: str, decision: Decision, rationale: str, conditions: Sequence[str]
@@ -78,8 +83,7 @@ def decision_payload_hash(
         rationale=rationale,
         conditions=conditions,
     )
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return canonical_hash(payload)
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,8 @@ class ApprovalTokenIssuer:
         now: int | None = None,
         jti: str | None = None,
     ) -> str:
+        if not approver.strip():
+            raise ValueError("approver must not be blank")
         issued_at = int(time.time()) if now is None else now
         ttl = self.default_ttl_seconds if ttl_seconds is None else ttl_seconds
         payload: dict[str, Any] = {

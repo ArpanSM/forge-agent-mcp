@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.middleware import Middleware
 
-from .approval import CONSOLE_ISSUER, DEFAULT_APPROVAL_SECRET
+from .approval import CONSOLE_ISSUER
 from .auth import TOOL_SCOPES, LocalTokenIssuer, build_verifier
 from .gate import GatewayGate
 from .middleware import InvalidRequestEnvelopeMiddleware
@@ -71,12 +71,15 @@ def create_gateway(
     store: GatewayStore,
     auth: LocalTokenIssuer,
     *,
-    tool_scopes: dict[str, str] | None = None,
-    approval_secret: str = DEFAULT_APPROVAL_SECRET,
+    approval_secret: str,
     approval_audience: str | None = None,
     approval_issuer: str = CONSOLE_ISSUER,
+    tool_scopes: dict[str, str] | None = None,
 ) -> Gateway:
     """Build the gateway and register the eight tools in a stable order."""
+
+    if not approval_secret.strip():
+        raise ValueError("an explicit approval secret is required")
 
     verifier = build_verifier(
         secret=auth.secret,

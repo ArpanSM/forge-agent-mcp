@@ -99,6 +99,41 @@ def test_valid_approval_token_round_trips_with_every_bound_claim() -> None:
     assert claims.exp == issued_at + 600
 
 
+def test_issuer_refuses_to_mint_for_a_blank_approver() -> None:
+    with pytest.raises(ValueError, match="approver"):
+        _issuer().issue(
+            approver="   ",
+            tenant_id=TENANT,
+            case_id=CASE_ID,
+            decision="approve",
+            payload_hash=_hash(),
+        )
+
+
+def test_signed_token_with_a_blank_subject_is_rejected_as_malformed() -> None:
+    token = jwt.encode(
+        {
+            "iss": CONSOLE_ISSUER,
+            "aud": AUDIENCE,
+            "sub": "   ",
+            "tid": TENANT,
+            "case_id": CASE_ID,
+            "decision": "approve",
+            "payload_hash": _hash(),
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 600,
+            "jti": "jti-blank-sub",
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+
+    with pytest.raises(ApprovalTokenError) as raised:
+        _verify(token)
+
+    assert raised.value.code == "approval_malformed"
+
+
 @pytest.mark.parametrize(
     ("token_factory", "error_code"),
     [
