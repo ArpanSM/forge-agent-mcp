@@ -31,6 +31,19 @@ Work is tracked in GitHub Issues in the public repository:
 - PRs reference the ticket (`Closes #N` only when every acceptance criterion is met) and
   the spec (#1).
 
+## Current blocking edges
+
+| Issue | Blocked by | Blocks |
+|---|---|---|
+| #2 Scaffold and synthetic corpus | — | #3, #5 |
+| #3 Extraction and citations | #2 | #4 |
+| #4 Rule engine and recommendation | #3 | #7 |
+| #5 MCP gateway, auth and audit | #2 | #6 |
+| #6 Approval token and idempotent write | #5 | #7 |
+| #7 LangGraph agent and console | #4, #6 | #8 |
+| #8 Evaluation harness and report | #7 | #9 |
+| #9 Proof assets and release gate | #8 | — |
+
 ## Agent workflow
 
 1. Read the ticket, spec, `CONTEXT.md`, the relevant ADRs and the coding standards.
