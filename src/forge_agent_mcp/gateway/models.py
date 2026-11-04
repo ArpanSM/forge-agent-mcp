@@ -17,7 +17,17 @@ CaseStatus = Literal[
     "declined",
 ]
 DocumentStatus = Literal["pending", "extracted"]
-AuditEventType = Literal["read", "write", "write_denied", "read_denied", "auth_denied"]
+CrmStage = Literal["approved", "conditionally_approved", "declined", "awaiting_documents"]
+AuditEventType = Literal[
+    "read",
+    "write",
+    "write_committed",
+    "write_denied",
+    "idempotent_replay",
+    "idempotency_conflict",
+    "read_denied",
+    "auth_denied",
+]
 AuditOutcome = Literal["ok", "denied", "error"]
 
 
@@ -141,27 +151,36 @@ class DecisionRecord(StrictModel):
     conditions: list[str]
     approver: str | None = None
     principal: str | None = None
+    replayed: bool = False
+    created_at: str
+
+
+class CrmStageRecord(StrictModel):
+    crm_stage_id: str
+    case_id: str
+    stage: CrmStage
+    decision_id: str
     created_at: str
 
 
 class ApprovalRecord(StrictModel):
-    tenant_id: str
-    approval_id: str
-    case_id: str
-    jti: str
-    approver: str
-    payload_hash: str
+    tenant_id: str = Field(min_length=1)
+    approval_id: str = Field(min_length=1)
+    case_id: str = Field(min_length=1)
+    jti: str = Field(min_length=1)
+    approver: str = Field(min_length=1)
+    payload_hash: str = Field(min_length=64, max_length=64)
     expires_at: str
     used_at: str | None = None
     created_at: str
 
 
 class IdempotencyRecord(StrictModel):
-    tenant_id: str
-    principal: str
-    tool: str
-    key: str
-    args_hash: str
+    tenant_id: str = Field(min_length=1)
+    principal: str = Field(min_length=1)
+    tool: str = Field(min_length=1)
+    key: str = Field(min_length=1)
+    args_hash: str = Field(min_length=64, max_length=64)
     result: dict[str, Any]
     created_at: str
 
@@ -245,6 +264,7 @@ class CaseView(StrictModel):
     recommendation: RecommendationRecord | None = None
     flags: list[FlagRecord]
     decision: DecisionRecord | None = None
+    crm_stage: CrmStageRecord | None = None
 
 
 class DocumentView(StrictModel):
@@ -319,7 +339,7 @@ class CreateDecisionInput(StrictModel):
     decision: Decision
     rationale: str = Field(min_length=1)
     conditions: list[str] = Field(default_factory=list)
-    approval_token: str = Field(min_length=1)
+    approval_token: str
     idempotency_key: str = Field(min_length=1)
 
 

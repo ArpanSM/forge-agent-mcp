@@ -15,6 +15,7 @@ import uvicorn
 
 from forge_agent_mcp.corpus.generator import GenerationResult, generate_corpus
 from forge_agent_mcp.corpus.manifest import Manifest, load_manifest
+from forge_agent_mcp.gateway.approval import ApprovalTokenIssuer
 from forge_agent_mcp.gateway.auth import LocalTokenIssuer
 from forge_agent_mcp.gateway.server import create_gateway
 from forge_agent_mcp.gateway.store import GatewayStore
@@ -25,6 +26,8 @@ MANIFEST_PATH = PROJECT_ROOT / "corpus" / "manifest.json"
 ISSUER = "http://127.0.0.1:8765"
 AUDIENCE = "forge-freight-gateway"
 SECRET = "gateway-http-test-secret-at-least-32-bytes"
+APPROVAL_SECRET = "console-approval-test-secret-at-least-32-bytes"
+APPROVER = "underwriter@example.test"
 TENANT = "tenant_northwind"
 OTHER_TENANT = "tenant_other"
 
@@ -117,6 +120,7 @@ class RunningGateway:
     url: str
     issuer: LocalTokenIssuer
     store: GatewayStore
+    approval: ApprovalTokenIssuer
 
     def token(
         self,
@@ -136,7 +140,12 @@ class RunningGateway:
 def running_gateway(db_path: Path) -> Iterator[RunningGateway]:
     store = GatewayStore(db_path)
     issuer = LocalTokenIssuer(secret=SECRET, issuer=ISSUER, audience=AUDIENCE)
-    gateway_server = create_gateway(store, issuer)
+    gateway_server = create_gateway(
+        store,
+        issuer,
+        approval_secret=APPROVAL_SECRET,
+        approval_audience=AUDIENCE,
+    )
     port = _free_port()
     config = uvicorn.Config(
         gateway_server.http_app(),
@@ -158,6 +167,7 @@ def running_gateway(db_path: Path) -> Iterator[RunningGateway]:
         url=f"http://127.0.0.1:{port}/mcp",
         issuer=issuer,
         store=store,
+        approval=ApprovalTokenIssuer(secret=APPROVAL_SECRET, audience=AUDIENCE),
     )
     try:
         yield running

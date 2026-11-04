@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -14,14 +15,17 @@ from typing import Any
 from ..corpus.manifest import Manifest
 from ..corpus.pdf import render_pdf
 from ..corpus.templates import build_documents, build_records
-from ..corpus.vocab import CaseType, Recommendation
+from ..corpus.vocab import CaseType, Decision, Recommendation
 from .models import (
+    ApprovalRecord,
     AuditEvent,
     AuditEventType,
     AuditOutcome,
     CarrierView,
     CaseRecord,
     CitationView,
+    CrmStage,
+    CrmStageRecord,
     DecisionRecord,
     DocumentBBox,
     DocumentPage,
@@ -29,6 +33,7 @@ from .models import (
     ExtractedField,
     ExtractionRecord,
     FlagRecord,
+    IdempotencyRecord,
     PolicyPack,
     RecommendationRecord,
     StoredRecord,
@@ -150,6 +155,19 @@ CREATE TABLE IF NOT EXISTS approvals (
     created_at TEXT NOT NULL,
     PRIMARY KEY (tenant_id, approval_id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS approvals_jti_idx ON approvals (tenant_id, jti);
+
+CREATE TABLE IF NOT EXISTS crm_stages (
+    tenant_id TEXT NOT NULL,
+    case_id TEXT NOT NULL,
+    crm_stage_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    decision_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, crm_stage_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS crm_stages_decision_idx
+    ON crm_stages (tenant_id, decision_id);
 
 CREATE TABLE IF NOT EXISTS audit (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,6 +211,34 @@ END;
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _canonical_hash(payload: Any) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class IdempotencyConflictError(Exception):
+    """The same key was already used with different canonical arguments."""
+
+
+class ApprovalReusedError(Exception):
+    """The approval token's ``jti`` was already consumed by a committed write."""
+
+
+CRM_STAGE_BY_DECISION: dict[str, CrmStage] = {
+    "approve": "approved",
+    "conditional_approve": "conditionally_approved",
+    "decline": "declined",
+    "request_documents": "awaiting_documents",
+}
+
+CASE_STATUS_BY_DECISION: dict[str, str] = {
+    "approve": "approved",
+    "conditional_approve": "approved",
+    "decline": "declined",
+    "request_documents": "awaiting_documents",
+}
 
 
 class GatewayStore:
@@ -686,6 +732,267 @@ class GatewayStore:
             principal=row["principal"],
             created_at=row["created_at"],
         )
+
+    def count_decisions(self, tenant_id: str, case_id: str) -> int:
+        row = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM decisions WHERE tenant_id = ? AND case_id = ?",
+            (tenant_id, case_id),
+        ).fetchone()
+        return int(row["count"])
+
+    def latest_crm_stage(self, tenant_id: str, case_id: str) -> CrmStageRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM crm_stages
+            WHERE tenant_id = ? AND case_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (tenant_id, case_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return CrmStageRecord(
+            crm_stage_id=row["crm_stage_id"],
+            case_id=row["case_id"],
+            stage=row["stage"],
+            decision_id=row["decision_id"],
+            created_at=row["created_at"],
+        )
+
+    def count_crm_stages(self, tenant_id: str, case_id: str) -> int:
+        row = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM crm_stages WHERE tenant_id = ? AND case_id = ?",
+            (tenant_id, case_id),
+        ).fetchone()
+        return int(row["count"])
+
+    def get_idempotency(
+        self, tenant_id: str, principal: str, tool: str, key: str
+    ) -> IdempotencyRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM idempotency
+            WHERE tenant_id = ? AND principal = ? AND tool = ? AND key = ?
+            """,
+            (tenant_id, principal, tool, key),
+        ).fetchone()
+        if row is None:
+            return None
+        return IdempotencyRecord(
+            tenant_id=row["tenant_id"],
+            principal=row["principal"],
+            tool=row["tool"],
+            key=row["key"],
+            args_hash=row["args_hash"],
+            result=json.loads(row["result_json"]),
+            created_at=row["created_at"],
+        )
+
+    def approval_is_used(self, tenant_id: str, jti: str) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM approvals
+            WHERE tenant_id = ? AND jti = ? AND used_at IS NOT NULL
+            """,
+            (tenant_id, jti),
+        ).fetchone()
+        return row is not None
+
+    def commit_decision(
+        self,
+        *,
+        tenant_id: str,
+        case_id: str,
+        decision: Decision,
+        rationale: str,
+        conditions: list[str],
+        principal: str,
+        approver: str,
+        approval_jti: str,
+        approval_expires_at: str,
+        payload_hash: str,
+        idempotency_key: str,
+        input_hash: str,
+    ) -> DecisionRecord:
+        """Write decision, CRM stage, approval use, idempotency and audit atomically.
+
+        The idempotency and single-use checks happen inside the same transaction as
+        the writes, so a retry cannot create a second decision. A same-key retry with
+        the same canonical arguments returns the stored result with ``replayed`` set;
+        different arguments raise ``IdempotencyConflictError``.
+        """
+
+        now = _now()
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT args_hash, result_json FROM idempotency
+                WHERE tenant_id = ? AND principal = ? AND tool = ? AND key = ?
+                """,
+                (tenant_id, principal, "create_decision", idempotency_key),
+            ).fetchone()
+            if row is not None:
+                if row["args_hash"] != payload_hash:
+                    raise IdempotencyConflictError(
+                        "This idempotency key was already used with different arguments."
+                    )
+                stored = DecisionRecord.model_validate_json(row["result_json"])
+                return stored.model_copy(update={"replayed": True})
+
+            used = self._connection.execute(
+                """
+                SELECT 1 FROM approvals
+                WHERE tenant_id = ? AND jti = ? AND used_at IS NOT NULL
+                """,
+                (tenant_id, approval_jti),
+            ).fetchone()
+            if used is not None:
+                raise ApprovalReusedError("This approval token has already been used.")
+
+            record = DecisionRecord(
+                decision_id=f"dec_{uuid.uuid4().hex[:12]}",
+                case_id=case_id,
+                decision=decision,
+                rationale=rationale,
+                conditions=conditions,
+                approver=approver,
+                principal=principal,
+                created_at=now,
+            )
+            result_json = json.dumps(record.model_dump(mode="json"), sort_keys=True)
+            approval_record = ApprovalRecord(
+                tenant_id=tenant_id,
+                approval_id=f"apr_{uuid.uuid4().hex[:12]}",
+                case_id=case_id,
+                jti=approval_jti,
+                approver=approver,
+                payload_hash=payload_hash,
+                expires_at=approval_expires_at,
+                used_at=now,
+                created_at=now,
+            )
+            idempotency_record = IdempotencyRecord(
+                tenant_id=tenant_id,
+                principal=principal,
+                tool="create_decision",
+                key=idempotency_key,
+                args_hash=payload_hash,
+                result=record.model_dump(mode="json"),
+                created_at=now,
+            )
+            crm_stage = CRM_STAGE_BY_DECISION[decision]
+            case_status = CASE_STATUS_BY_DECISION[decision]
+
+            self._connection.execute(
+                """
+                INSERT INTO decisions (
+                    tenant_id, case_id, decision_id, decision, rationale,
+                    conditions_json, approver, principal, approval_jti,
+                    idempotency_key, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    case_id,
+                    record.decision_id,
+                    decision,
+                    rationale,
+                    json.dumps(conditions, sort_keys=True),
+                    approver,
+                    principal,
+                    approval_jti,
+                    idempotency_key,
+                    now,
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO approvals (
+                    tenant_id, case_id, approval_id, jti, approver,
+                    payload_hash, expires_at, used_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    approval_record.tenant_id,
+                    approval_record.case_id,
+                    approval_record.approval_id,
+                    approval_record.jti,
+                    approval_record.approver,
+                    approval_record.payload_hash,
+                    approval_record.expires_at,
+                    approval_record.used_at,
+                    approval_record.created_at,
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO crm_stages (
+                    tenant_id, case_id, crm_stage_id, stage, decision_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    case_id,
+                    f"crm_{uuid.uuid4().hex[:12]}",
+                    crm_stage,
+                    record.decision_id,
+                    now,
+                ),
+            )
+            self._connection.execute(
+                """
+                UPDATE cases SET status = ?
+                WHERE tenant_id = ? AND case_id = ?
+                """,
+                (case_status, tenant_id, case_id),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO idempotency (
+                    tenant_id, principal, tool, key, args_hash, result_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    idempotency_record.tenant_id,
+                    idempotency_record.principal,
+                    idempotency_record.tool,
+                    idempotency_record.key,
+                    idempotency_record.args_hash,
+                    result_json,
+                    idempotency_record.created_at,
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO audit (
+                    tenant_id, case_id, tool, event, outcome, principal,
+                    input_hash, output_hash, detail_json, created_at
+                ) VALUES (?, ?, 'create_decision', 'write_committed', 'ok', ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    case_id,
+                    principal,
+                    input_hash,
+                    _canonical_hash(record.model_dump(mode="json")),
+                    json.dumps(
+                        {
+                            "decision_id": record.decision_id,
+                            "decision": decision,
+                            "crm_stage": crm_stage,
+                            "case_status": case_status,
+                            "approver": approver,
+                            "jti": approval_jti,
+                            "idempotency_key": idempotency_key,
+                            "payload_hash": payload_hash,
+                        },
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+        return record
 
     # -- audit -----------------------------------------------------------
 

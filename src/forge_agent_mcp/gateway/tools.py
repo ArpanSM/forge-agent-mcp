@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
@@ -17,6 +18,14 @@ from pydantic import Field
 
 from ..corpus.pdf import PAGE_HEIGHT, PAGE_WIDTH
 from ..corpus.vocab import Decision, Recommendation
+from .approval import (
+    CONSOLE_ISSUER,
+    REQUIRED_CODE,
+    REUSED_CODE,
+    ApprovalTokenError,
+    decision_payload_hash,
+    verify_approval_token,
+)
 from .auth import (
     APPROVE_SCOPE,
     READ_SCOPE,
@@ -50,7 +59,7 @@ from .models import (
     RecordExtractionInput,
     RecordRecommendationInput,
 )
-from .store import GatewayStore
+from .store import ApprovalReusedError, GatewayStore, IdempotencyConflictError
 
 CaseEnvelope = Envelope[CaseView]
 DocumentEnvelope = Envelope[DocumentView]
@@ -237,6 +246,58 @@ def _audit_success(
     )
 
 
+def _audit_decision_denied(
+    store: GatewayStore,
+    *,
+    tenant_id: str,
+    case_id: str,
+    principal: str,
+    request: CreateDecisionInput,
+    error_code: str,
+    message: str,
+    event: AuditEventType = "write_denied",
+) -> None:
+    store.append_audit(
+        tenant_id=tenant_id,
+        case_id=case_id,
+        tool="create_decision",
+        event=event,
+        outcome="denied",
+        principal=principal,
+        input_hash=_hash(request),
+        detail={
+            "error_code": error_code,
+            "message": message,
+            "idempotency_key": request.idempotency_key,
+        },
+    )
+
+
+def _audit_decision_replay(
+    store: GatewayStore,
+    *,
+    tenant_id: str,
+    case_id: str,
+    principal: str,
+    request: CreateDecisionInput,
+    envelope: Any,
+) -> None:
+    store.append_audit(
+        tenant_id=tenant_id,
+        case_id=case_id,
+        tool="create_decision",
+        event="idempotent_replay",
+        outcome="ok",
+        principal=principal,
+        input_hash=_hash(request),
+        output_hash=_hash(envelope),
+        detail={
+            "decision_id": envelope.data.decision_id,
+            "idempotency_key": request.idempotency_key,
+        },
+    )
+
+
 def _case_summary(
     case: CaseRecord,
     documents: list[CaseDocumentView],
@@ -286,6 +347,7 @@ def _case_view(store: GatewayStore, case: CaseRecord) -> CaseView:
         recommendation=recommendation,
         flags=flags,
         decision=store.latest_decision(case.tenant_id, case.case_id),
+        crm_stage=store.latest_crm_stage(case.tenant_id, case.case_id),
     )
 
 
@@ -407,7 +469,14 @@ def _validate_evidence(
     return None
 
 
-def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
+def register_tools(
+    mcp: FastMCP,
+    store: GatewayStore,
+    *,
+    approval_secret: str,
+    approval_audience: str,
+    approval_issuer: str = CONSOLE_ISSUER,
+) -> None:
     """Register the eight typed tools in deterministic order."""
 
     @mcp.tool(
@@ -823,8 +892,8 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
     @mcp.tool(
         name="create_decision",
         description=(
-            "Commit a human-approved underwriting decision and CRM stage. Registered now; "
-            "the approval-token and idempotent write path lands in ticket #6."
+            "Commit one human-approved underwriting decision, CRM stage and audit event "
+            "in a single idempotent transaction. Requires a console-minted approval token."
         ),
         auth=require_scopes(APPROVE_SCOPE),
         output_schema=DecisionEnvelope.model_json_schema(),
@@ -841,7 +910,7 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
         decision: Decision,
         rationale: Annotated[str, Field(min_length=1)],
         conditions: list[str],
-        approval_token: Annotated[str, Field(min_length=1)],
+        approval_token: str,
         idempotency_key: Annotated[str, Field(min_length=1)],
     ) -> DecisionEnvelope | ToolResult:
         context = _request_context()
@@ -869,22 +938,144 @@ def register_tools(mcp: FastMCP, store: GatewayStore) -> None:
             return _failure(
                 DecisionEnvelope, access.error_code or "case_not_found", access.message or ""
             )
-        message = (
-            "create_decision requires a valid approval token and idempotent write path; "
-            "ticket #6 implements the approval and idempotency stores."
-        )
-        _audit_failure(
-            store,
-            tenant_id=access.tenant_id,
+
+        payload_hash = decision_payload_hash(
             case_id=request.case_id,
-            tool="create_decision",
-            event="write_denied",
-            principal=context.principal,
-            error_code="approval_required",
-            message=message,
-            request=request,
+            decision=request.decision,
+            rationale=request.rationale,
+            conditions=request.conditions,
         )
-        return _failure(DecisionEnvelope, "approval_required", message)
+
+        # A replay must be safe even when the original approval token has since
+        # expired or been consumed, so the idempotency lookup comes first.
+        existing = store.get_idempotency(
+            access.tenant_id,
+            context.principal,
+            "create_decision",
+            request.idempotency_key,
+        )
+        if existing is not None:
+            if existing.args_hash != payload_hash:
+                message = "This idempotency key was already used with different arguments."
+                _audit_decision_denied(
+                    store,
+                    tenant_id=access.tenant_id,
+                    case_id=request.case_id,
+                    principal=context.principal,
+                    request=request,
+                    error_code="idempotency_conflict",
+                    message=message,
+                    event="idempotency_conflict",
+                )
+                return _failure(DecisionEnvelope, "idempotency_conflict", message)
+            stored = DecisionRecord.model_validate(existing.result).model_copy(
+                update={"replayed": True}
+            )
+            envelope = DecisionEnvelope(ok=True, data=stored)
+            _audit_decision_replay(
+                store,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                principal=context.principal,
+                request=request,
+                envelope=envelope,
+            )
+            return envelope
+
+        if not request.approval_token.strip():
+            message = "A console-minted approval token is required for create_decision."
+            _audit_decision_denied(
+                store,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                principal=context.principal,
+                request=request,
+                error_code=REQUIRED_CODE,
+                message=message,
+            )
+            return _failure(DecisionEnvelope, REQUIRED_CODE, message)
+
+        try:
+            claims = verify_approval_token(
+                request.approval_token,
+                secret=approval_secret,
+                audience=approval_audience,
+                issuer=approval_issuer,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                decision=request.decision,
+                payload_hash=payload_hash,
+            )
+        except ApprovalTokenError as exc:
+            _audit_decision_denied(
+                store,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                principal=context.principal,
+                request=request,
+                error_code=exc.code,
+                message=exc.message,
+            )
+            return _failure(DecisionEnvelope, exc.code, exc.message)
+
+        if store.approval_is_used(access.tenant_id, claims.jti):
+            message = "This approval token has already been used."
+            _audit_decision_denied(
+                store,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                principal=context.principal,
+                request=request,
+                error_code=REUSED_CODE,
+                message=message,
+            )
+            return _failure(DecisionEnvelope, REUSED_CODE, message)
+
+        try:
+            record = store.commit_decision(
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                decision=request.decision,
+                rationale=request.rationale,
+                conditions=request.conditions,
+                principal=context.principal,
+                approver=claims.sub,
+                approval_jti=claims.jti,
+                approval_expires_at=datetime.fromtimestamp(claims.exp, UTC).isoformat(
+                    timespec="seconds"
+                ),
+                payload_hash=payload_hash,
+                idempotency_key=request.idempotency_key,
+                input_hash=_hash(request),
+            )
+        except IdempotencyConflictError:
+            message = "This idempotency key was already used with different arguments."
+            _audit_decision_denied(
+                store,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                principal=context.principal,
+                request=request,
+                error_code="idempotency_conflict",
+                message=message,
+                event="idempotency_conflict",
+            )
+            return _failure(DecisionEnvelope, "idempotency_conflict", message)
+        except ApprovalReusedError:
+            message = "This approval token has already been used."
+            _audit_decision_denied(
+                store,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                principal=context.principal,
+                request=request,
+                error_code=REUSED_CODE,
+                message=message,
+            )
+            return _failure(DecisionEnvelope, REUSED_CODE, message)
+
+        envelope = DecisionEnvelope(ok=True, data=record)
+        return envelope
 
     @mcp.tool(
         name="get_audit",

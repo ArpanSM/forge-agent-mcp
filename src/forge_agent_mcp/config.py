@@ -7,6 +7,8 @@ from typing import Literal
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .gateway.approval import CONSOLE_ISSUER, DEFAULT_APPROVAL_SECRET
+
 ORCAROUTER_BASE_URL = "https://api.orcarouter.ai/v1"
 ORCAROUTER_DEFAULT_MODEL = "tencent/hy4-preview-free"
 LFM3_BASE_URL = "http://127.0.0.1:8080/v1"
@@ -47,6 +49,9 @@ class Settings(BaseSettings):
     gateway_tenant_id: str = "tenant_northwind"
     gateway_host: str = "127.0.0.1"
     gateway_port: int = 8765
+    gateway_console_issuer: str = CONSOLE_ISSUER
+    gateway_approval_secret: SecretStr = SecretStr(DEFAULT_APPROVAL_SECRET)
+    gateway_approval_ttl_seconds: int = 900
 
 
 def _secret(value: SecretStr | None) -> str | None:

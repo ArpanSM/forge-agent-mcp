@@ -733,7 +733,7 @@ def test_missing_case_returns_a_case_not_found_envelope(gateway, tool_name: str)
     assert result.structured_content["data"] is None
 
 
-def test_create_decision_refuses_with_approval_required_until_ticket_6(gateway) -> None:
+def test_create_decision_refuses_a_missing_approval_token(gateway) -> None:
     token = gateway.token(subject="agent-approver", scopes=[READ_SCOPE, APPROVE_SCOPE])
 
     async def scenario():
@@ -745,7 +745,7 @@ def test_create_decision_refuses_with_approval_required_until_ticket_6(gateway) 
                     "decision": "approve",
                     "rationale": "Looks clean.",
                     "conditions": [],
-                    "approval_token": "not-a-real-approval-token",
+                    "approval_token": "",
                     "idempotency_key": "idem-1",
                 },
             )
