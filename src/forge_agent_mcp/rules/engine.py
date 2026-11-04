@@ -8,9 +8,15 @@ from pathlib import Path
 from ..extraction.extractor import extract_case
 from ..extraction.models import CaseExtraction
 from .catalog import sort_flags
+from .conditions import condition_for
 from .corpus import CasePacket, RuleEngineError, load_case_packet
 from .models import CaseReview, RecommendationResult, ReviewResult, RuleFlag
-from .validators import validate_identity
+from .validators import (
+    validate_authority,
+    validate_identity,
+    validate_insurance,
+    validate_watchlist,
+)
 from .values import Documents
 
 
@@ -28,7 +34,13 @@ def validate(extraction: CaseExtraction, packet: CasePacket) -> list[RuleFlag]:
             f"extraction case {extraction.case_id!r} does not match packet {packet.case_id!r}"
         )
     documents = Documents.from_extraction(extraction)
-    flags = [*validate_identity(documents)]
+    as_of = _as_of(extraction, packet)
+    flags = [
+        *validate_watchlist(packet),
+        *validate_authority(documents, as_of),
+        *validate_identity(documents),
+        *validate_insurance(documents, as_of),
+    ]
     return sort_flags(flags)
 
 
@@ -53,6 +65,21 @@ def recommend(
             decision="decline",
             rationale=rationale,
             conditions=[],
+            evidence_gaps=gaps,
+        )
+
+    mediums = [flag for flag in flags if flag.severity == "medium"]
+    if mediums:
+        conditions: list[str] = []
+        for flag in mediums:
+            condition = condition_for(flag)
+            if condition is not None and condition not in conditions:
+                conditions.append(condition)
+        return RecommendationResult(
+            recommendation="conditional_approve",
+            decision="conditional_approve",
+            rationale="Only medium-severity flags remain; approve with conditions.",
+            conditions=conditions,
             evidence_gaps=gaps,
         )
 
