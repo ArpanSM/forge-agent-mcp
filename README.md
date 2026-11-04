@@ -2,7 +2,7 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, and the MCP gateway with auth, tenant isolation and audit. Agent, console and evals next.
+**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, and the MCP gateway with auth, tenant isolation, audit and the approval-token/idempotent decision write. Agent, console and evals next.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - [Gateway guide](docs/gateway.md)
@@ -23,6 +23,7 @@ make review CASE=case_inv_northgate    # flags, severity, recommendation and evi
 make gateway         # FastMCP Streamable HTTP server on 127.0.0.1:8765/mcp
 make gateway-client  # list tools, read a case, show a scoped 403
 make gateway-demo    # in-process server + client demo
+make write-demo      # approval refusal, commit, replay, conflict and audit chain
 ```
 
 If the system Python is externally managed, pass the flags your environment needs, for
@@ -94,6 +95,13 @@ the gateway policy pack. The corpus also catalogues `altered_metadata` and
 `freight:write` and `freight:approve` scopes, a local HS256 issuer, a tenant check and an
 append-only audit log. `make gateway-client` lists the tools, reads a case and shows a
 scoped 403.
+
+`create_decision` also requires a console-minted HMAC approval token bound to the tenant,
+case, decision, payload and expiry, with a single-use `jti`. The decision, CRM stage,
+approval use, idempotency row and audit event commit in one transaction. A same-key retry
+replays the stored result; changed arguments return `idempotency_conflict`; expired,
+mismatched, forged and reused tokens are refused. `make write-demo` runs every path and
+prints the audit chain.
 
 stdio is available for local tools and tests, but it is a trusted local transport and
 skips auth; it is not the scoped demo. The startup warning and

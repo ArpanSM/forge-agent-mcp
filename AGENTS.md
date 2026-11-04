@@ -29,4 +29,5 @@ make lint      # ruff
 make gateway   # FastMCP gateway over Streamable HTTP
 make gateway-client # client demo against a running gateway
 make gateway-demo   # in-process server + client demo
+make write-demo     # approval refusal, commit, replay, conflict and audit chain
 ```

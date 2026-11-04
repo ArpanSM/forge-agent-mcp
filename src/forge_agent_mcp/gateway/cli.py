@@ -13,13 +13,16 @@ import uvicorn
 
 from ..config import Settings
 from ..corpus.manifest import load_manifest
+from .approval import ApprovalTokenIssuer
 from .auth import APPROVE_SCOPE, READ_SCOPE, WRITE_SCOPE, LocalTokenIssuer
 from .client import main as client_main
 from .server import create_gateway
 from .store import GatewayStore
+from .write_demo import main as write_demo_main
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parents[3] / "corpus" / "manifest.json"
 DEFAULT_DB = Path("data") / "gateway.db"
+DEFAULT_WRITE_DEMO_DB = Path("data") / "write-demo.db"
 
 
 def _issuer(settings: Settings) -> LocalTokenIssuer:
@@ -27,6 +30,15 @@ def _issuer(settings: Settings) -> LocalTokenIssuer:
         secret=settings.gateway_jwt_secret.get_secret_value(),
         issuer=settings.gateway_issuer,
         audience=settings.gateway_audience,
+    )
+
+
+def _approval_issuer(settings: Settings) -> ApprovalTokenIssuer:
+    return ApprovalTokenIssuer(
+        secret=settings.gateway_approval_secret.get_secret_value(),
+        issuer=settings.gateway_console_issuer,
+        audience=settings.gateway_audience,
+        default_ttl_seconds=settings.gateway_approval_ttl_seconds,
     )
 
 
@@ -84,13 +96,30 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument("--host")
     demo.add_argument("--port", type=int)
 
+    write_demo = subparsers.add_parser(
+        "write-demo",
+        help="show approval refusal, commit, replay, conflict and audit rows",
+    )
+    write_demo.add_argument("--db")
+    write_demo.add_argument("--manifest")
+    write_demo.add_argument("--case-id")
+    write_demo.add_argument("--host")
+    write_demo.add_argument("--port", type=int)
+    write_demo.add_argument("--approver", default="underwriter@example.test")
+
     return parser
 
 
 def _serve(args: argparse.Namespace) -> int:
     settings = Settings()
     store = _open_store(settings, db_path=args.db, manifest_path=args.manifest)
-    gateway = create_gateway(store, _issuer(settings))
+    gateway = create_gateway(
+        store,
+        _issuer(settings),
+        approval_secret=settings.gateway_approval_secret.get_secret_value(),
+        approval_audience=settings.gateway_audience,
+        approval_issuer=settings.gateway_console_issuer,
+    )
     try:
         if args.transport == "stdio":
             gateway.run(transport="stdio")
@@ -151,7 +180,13 @@ def _demo(args: argparse.Namespace) -> int:
         audience=settings.gateway_audience,
     )
     store = _open_store(settings, db_path=args.db, manifest_path=args.manifest)
-    gateway = create_gateway(store, issuer)
+    gateway = create_gateway(
+        store,
+        issuer,
+        approval_secret=settings.gateway_approval_secret.get_secret_value(),
+        approval_audience=settings.gateway_audience,
+        approval_issuer=settings.gateway_console_issuer,
+    )
     config = uvicorn.Config(gateway.http_app(), host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
@@ -190,6 +225,62 @@ def _demo(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _write_demo(args: argparse.Namespace) -> int:
+    settings = Settings()
+    host = args.host or settings.gateway_host
+    port = args.port or settings.gateway_port
+    url = f"http://{host}:{port}/mcp"
+    db_path = args.db or settings.gateway_db_path or str(DEFAULT_WRITE_DEMO_DB)
+    if args.db is None and settings.gateway_db_path is None:
+        # Keep the walkthrough repeatable: the default demo database is disposable.
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+    issuer = LocalTokenIssuer(
+        secret=settings.gateway_jwt_secret.get_secret_value(),
+        issuer=f"http://{host}:{port}",
+        audience=settings.gateway_audience,
+    )
+    store = _open_store(settings, db_path=db_path, manifest_path=args.manifest)
+    gateway = create_gateway(
+        store,
+        issuer,
+        approval_secret=settings.gateway_approval_secret.get_secret_value(),
+        approval_audience=settings.gateway_audience,
+        approval_issuer=settings.gateway_console_issuer,
+    )
+    config = uvicorn.Config(gateway.http_app(), host=host, port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if server.started:
+            break
+        time.sleep(0.025)
+    if not server.started:
+        store.close()
+        print("error: write-demo server did not start", file=sys.stderr)
+        return 2
+
+    agent_token = issuer.issue(
+        subject="agent-underwriter",
+        tenant_id=settings.gateway_tenant_id,
+        scopes=[READ_SCOPE, APPROVE_SCOPE],
+    )
+    try:
+        return write_demo_main(
+            url=url,
+            case_id=args.case_id or "case_onb_ridgeline",
+            agent_token=agent_token,
+            approval=_approval_issuer(settings),
+            tenant_id=settings.gateway_tenant_id,
+            approver=args.approver,
+        )
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        store.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "serve":
@@ -198,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
         return _issue(args)
     if args.command == "client":
         return _client(args)
+    if args.command == "write-demo":
+        return _write_demo(args)
     return _demo(args)
 
 
