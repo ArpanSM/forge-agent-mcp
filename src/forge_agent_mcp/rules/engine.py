@@ -19,7 +19,9 @@ from .validators import (
     validate_identity,
     validate_insurance,
     validate_invoice_arithmetic,
+    validate_optional_fields,
     validate_pod,
+    validate_round_dollar,
     validate_required_documents,
     validate_watchlist,
 )
@@ -50,6 +52,8 @@ def validate(extraction: CaseExtraction, packet: CasePacket) -> list[RuleFlag]:
         *validate_duplicates(documents, packet),
         *validate_invoice_arithmetic(documents),
         *validate_pod(documents),
+        *validate_round_dollar(documents),
+        *validate_optional_fields(documents),
         *validate_required_documents(extraction, packet),
     ]
     return sort_flags(flags)
@@ -129,6 +133,16 @@ def recommend(
             recommendation="conditional_approve",
             decision="conditional_approve",
             rationale="Only medium-severity flags remain; approve with conditions.",
+            conditions=_ordered_conditions(flags),
+            evidence_gaps=gaps,
+        )
+
+    lows = [flag for flag in flags if flag.severity == "low"]
+    if lows:
+        return RecommendationResult(
+            recommendation="approve",
+            decision="approve",
+            rationale="Only low-severity clarifications remain; approve with clarification.",
             conditions=_ordered_conditions(flags),
             evidence_gaps=gaps,
         )

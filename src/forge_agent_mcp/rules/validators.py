@@ -293,6 +293,56 @@ def validate_invoice_arithmetic(documents: Documents) -> list[RuleFlag]:
     ]
 
 
+def validate_round_dollar(documents: Documents) -> list[RuleFlag]:
+    total_value = documents.field("invoice", "total")
+    accessorials_value = documents.field("invoice", "accessorials")
+    total = parse_money(total_value.value if total_value else None)
+    accessorials = parse_money(accessorials_value.value if accessorials_value else None)
+    if (
+        total_value is not None
+        and total is not None
+        and total > 0
+        and accessorials is not None
+        and accessorials == 0
+        and total % 500 == 0
+    ):
+        return [
+            make_flag(
+                "round_dollar_invoice",
+                rule_id="invoice.round_dollar",
+                details="Invoice total is a round multiple of $500.00 with no accessorials.",
+                evidence=evidence_for(total_value, "invoice"),
+            )
+        ]
+    return []
+
+
+def validate_optional_fields(documents: Documents) -> list[RuleFlag]:
+    invoice = documents.get("invoice")
+    if invoice is None or "reference_number" in invoice.fields:
+        return []
+
+    total_value = documents.field("invoice", "total")
+    if total_value is not None:
+        evidence = evidence_for(total_value, "invoice").model_copy(
+            update={"missing_field": "reference_number"}
+        )
+    else:
+        evidence = Evidence(
+            document_id=invoice.classification.document_id,
+            document_type="invoice",
+            missing_field="reference_number",
+        )
+    return [
+        make_flag(
+            "missing_optional_field",
+            rule_id="invoice.optional_reference",
+            details="The invoice has no optional customer reference number.",
+            evidence=evidence,
+        )
+    ]
+
+
 def validate_pod(documents: Documents) -> list[RuleFlag]:
     pod = documents.get("proof_of_delivery")
     if pod is None:
@@ -545,7 +595,9 @@ __all__ = [
     "validate_identity",
     "validate_insurance",
     "validate_invoice_arithmetic",
+    "validate_optional_fields",
     "validate_pod",
+    "validate_round_dollar",
     "validate_required_documents",
     "validate_watchlist",
 ]

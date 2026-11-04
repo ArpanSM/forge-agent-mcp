@@ -174,3 +174,28 @@ def test_pod_weight_mismatch_is_high_and_holds_with_arithmetic(generated_corpus)
         "Reconcile the invoice to the rate confirmation.",
         "Obtain a POD matching the BOL weight.",
     ]
+
+
+def test_round_dollar_invoice_is_medium_and_conditional(generated_corpus) -> None:
+    review = review_corpus_case(generated_corpus, "case_inv_quarry_road")
+
+    flags = {flag.code: flag for flag in review.flags}
+    assert set(flags) == {"round_dollar_invoice"}
+    assert flags["round_dollar_invoice"].severity == "medium"
+    assert review.recommendation.recommendation == "conditional_approve"
+    assert review.recommendation.conditions == ["Adjust reserve for the round-dollar invoice."]
+
+
+def test_missing_optional_reference_is_low_and_approves_with_clarification(generated_corpus) -> None:
+    review = review_corpus_case(generated_corpus, "case_inv_blue_alder")
+
+    flags = {flag.code: flag for flag in review.flags}
+    assert set(flags) == {"missing_optional_field"}
+    flag = flags["missing_optional_field"]
+    assert flag.severity == "low"
+    assert flag.evidence.missing_field == "reference_number"
+    assert review.recommendation.recommendation == "approve"
+    assert review.recommendation.decision == "approve"
+    assert review.recommendation.conditions == [
+        "Confirm the optional invoice reference before funding."
+    ]

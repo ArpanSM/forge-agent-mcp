@@ -31,6 +31,10 @@ def condition_for(flag: RuleFlag) -> str | None:
         return "Obtain a POD matching the BOL delivery date."
     if flag.rule_id == "pod.signature":
         return "Obtain a signed proof of delivery."
+    if flag.rule_id == "invoice.round_dollar":
+        return "Adjust reserve for the round-dollar invoice."
+    if flag.rule_id == "invoice.optional_reference":
+        return "Confirm the optional invoice reference before funding."
     if flag.rule_id == "documents.required":
         return _missing_document_condition(flag)
     return None
