@@ -35,6 +35,12 @@ class EvalDataset:
     def split(self, split: Split) -> list[EvalCase]:
         return [case for case in self.cases if case.split == split]
 
+    def case_entry(self, case_id: str) -> CaseIndex:
+        entry = next((case for case in self.index.cases if case.case_id == case_id), None)
+        if entry is None:
+            raise EvalDatasetError(f"case {case_id!r} is not in the eval corpus index")
+        return entry
+
     @property
     def carrier_count(self) -> int:
         return len(self.manifest.carriers)
@@ -142,7 +148,7 @@ def _case_from_truth(
     truth_documents = {document.document_id: document.document_type for document in truth.documents}
     manifest_documents = {
         document.document_id: document.document_type for document in entry.documents
-    }  # type: ignore[attr-defined]
+    }
     if truth_documents != manifest_documents:
         raise EvalDatasetError(
             f"case {truth.case_id}: document types disagree with the corpus index"

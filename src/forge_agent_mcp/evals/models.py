@@ -25,6 +25,9 @@ PipelineName = Literal["baseline", "fixed"]
 CiMethod = Literal["wilson", "bootstrap", "none"]
 MetricUnit = Literal["ratio", "ms", "usd"]
 Comparator = Literal["<=", ">="]
+DecisionSource = Literal["prompt", "fallback", "recommendation"]
+PricingMode = Literal["free", "priced", "unpriced"]
+ReleaseGate = Literal["passed", "failed", "not_applicable"]
 
 
 class DocumentOracle(StrictModel):
@@ -93,10 +96,13 @@ class PipelineRun(StrictModel):
     flags: list[str] = Field(default_factory=list)
     recommendation: Recommendation | None = None
     decision: Decision | None = None
+    decision_source: DecisionSource | None = None
     approval_present: bool = False
     bypass_probe_blocked: bool = False
     write_committed: bool = False
     decision_rows: int = Field(default=0, ge=0)
+    replay_ok: bool = False
+    replay_error: str | None = None
     audit_complete: bool = False
     audit_verified: bool = False
     injection_detected: bool = False
@@ -154,6 +160,7 @@ class MetricResult(StrictModel):
     ci_high: float | None = None
     ci_method: CiMethod = "none"
     unit: MetricUnit = "ratio"
+    case_count: int | None = Field(default=None, ge=0)
     notes: str | None = None
 
 
@@ -179,7 +186,9 @@ class PipelineSummary(StrictModel):
     tool_calls_succeeded: int = Field(ge=0)
     tool_calls_failed: int = Field(ge=0)
     duration_ms_total: float = Field(ge=0.0)
-    estimated_usd: float = Field(ge=0.0)
+    estimated_usd: float | None = Field(default=None, ge=0.0)
+    prompt_decisions: int = Field(default=0, ge=0)
+    fallback_decisions: int = Field(default=0, ge=0)
 
 
 class SplitMetrics(StrictModel):
@@ -239,27 +248,50 @@ class DatasetInfo(StrictModel):
     as_of: str
     eval_cases: int
     held_out_cases: int
+    eval_cases_run: int = Field(default=0, ge=0)
+    held_out_cases_run: int = Field(default=0, ge=0)
     carrier_count: int
+    subset: bool = False
+
+
+class ApprovalProbeInfo(StrictModel):
+    name: str
+    expected_code: str
+    actual_code: str | None = None
+    blocked: bool
+
+
+class PricingInfo(StrictModel):
+    mode: PricingMode
+    currency: Literal["USD"] = "USD"
+    input_price_per_1k: float | None = Field(default=None, ge=0.0)
+    output_price_per_1k: float | None = Field(default=None, ge=0.0)
+    note: str
 
 
 class EvalReport(StrictModel):
     schema_version: int = 1
     generated_at: datetime
     provider: ProviderInfo
+    pricing: PricingInfo
     dataset: DatasetInfo
     eval: SplitMetrics
     held_out: SplitMetrics
     gates: list[HardGate]
-    release_gate: Literal["passed", "failed"]
+    gate_applicable: bool = True
+    release_gate: ReleaseGate
+    approval_probes: list[ApprovalProbeInfo] = Field(default_factory=list)
     cases: list[CaseComparison]
     failure_gallery: list[FailureItem]
     caveats: list[str] = Field(default_factory=list)
 
 
 __all__ = [
+    "ApprovalProbeInfo",
     "CaseComparison",
     "CaseEvaluation",
     "DatasetInfo",
+    "DecisionSource",
     "DocumentOracle",
     "EvalCase",
     "EvalReport",
@@ -269,10 +301,14 @@ __all__ = [
     "HardGate",
     "MetricPair",
     "MetricResult",
+    "MetricUnit",
     "PipelineName",
+    "PricingMode",
     "PipelineRun",
     "PipelineSummary",
+    "PricingInfo",
     "ProviderInfo",
+    "ReleaseGate",
     "SplitMetrics",
     "ToolCallCounts",
 ]

@@ -37,6 +37,15 @@ class TokenSnapshot:
         return self.input_tokens + self.output_tokens
 
 
+def token_delta(before: TokenSnapshot, after: TokenSnapshot) -> TokenSnapshot:
+    """Return the token usage accumulated between two snapshots."""
+
+    return TokenSnapshot(
+        input_tokens=after.input_tokens - before.input_tokens,
+        output_tokens=after.output_tokens - before.output_tokens,
+    )
+
+
 class TokenCountingProvider:
     """Count estimated input/output tokens for every delegated call."""
 
@@ -92,4 +101,4 @@ class TokenCountingProvider:
         return result
 
 
-__all__ = ["TokenCountingProvider", "TokenSnapshot", "estimate_tokens"]
+__all__ = ["TokenCountingProvider", "TokenSnapshot", "estimate_tokens", "token_delta"]

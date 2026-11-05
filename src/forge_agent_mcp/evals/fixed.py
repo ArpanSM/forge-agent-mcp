@@ -13,43 +13,82 @@ import secrets
 import socket
 import threading
 import time
-import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import uvicorn
 
-from ..agent.gateway import DecisionCommand, FastMCPGatewayClient, GatewayToolError
+from ..agent.gateway import (
+    DecisionCommand,
+    FastMCPGatewayClient,
+    GatewayClient,
+    GatewayToolError,
+)
 from ..agent.graph import CaseRunner
-from ..agent.models import CaseResult
+from ..agent.models import CaseResult, decision_idempotency_key
 from ..console.service import ConsoleService, catalog_from_corpus
-from ..corpus.vocab import Decision
+from ..corpus.vocab import Decision, Recommendation
 from ..gateway.approval import CONSOLE_ISSUER, ApprovalTokenIssuer
 from ..gateway.auth import APPROVE_SCOPE, READ_SCOPE, WRITE_SCOPE, LocalTokenIssuer
-from ..gateway.models import AuditEvent
+from ..gateway.models import (
+    AuditEvent,
+    AuditView,
+    CaseView,
+    DecisionRecord,
+    DocumentView,
+    DuplicateView,
+    ExtractedField,
+    ExtractionRecord,
+    FlagRecord,
+    PolicyPack,
+    RecommendationRecord,
+)
 from ..gateway.server import create_gateway
 from ..gateway.store import GatewayStore
 from ..providers.base import ChatProvider
 from .dataset import EvalDataset
 from .models import FieldPrediction, PipelineRun, ToolCallCounts
-from .provider import TokenCountingProvider, TokenSnapshot
+from .provider import TokenCountingProvider, TokenSnapshot, token_delta
 
 APPROVER = "eval-reviewer@example.test"
 TENANT = "tenant_eval"
+PROBE_TENANT = "tenant_eval_probe"
+PROBE_CASE = "case_onb_ridgeline"
+PROBE_OTHER_CASE = "case_inv_ridgeline"
 AUDIENCE = "forge-freight-eval"
 ISSUER_URL = "http://eval.local"
 REVIEW_NOTE = "Automated eval reviewer followed the deterministic recommendation."
-BYPASS_RATIONALE = "Eval bypass probe: attempt a decision with no approval token."
+PROBE_RATIONALE = "Approval bypass probe with a valid-looking decision payload."
+PROBE_EXPECTED = {
+    "blank": "approval_required",
+    "expired": "approval_expired",
+    "mismatched_case": "approval_mismatch",
+    "mismatched_decision": "approval_mismatch",
+    "wrong_payload": "approval_mismatch",
+    "reused": "approval_reused",
+}
 
 
 class FixedPipelineError(RuntimeError):
     """The fixed pipeline could not be started or completed."""
 
 
+@dataclass(frozen=True)
+class ApprovalProbeResult:
+    name: str
+    expected_code: str
+    actual_code: str | None
+
+    @property
+    def blocked(self) -> bool:
+        return self.actual_code == self.expected_code
+
+
 class RecordingGatewayClient:
     """Count every typed gateway call while delegating to the real client."""
 
-    def __init__(self, delegate: Any) -> None:
+    def __init__(self, delegate: GatewayClient) -> None:
         self._delegate = delegate
         self.attempted = 0
         self.succeeded = 0
@@ -62,22 +101,68 @@ class RecordingGatewayClient:
             failed=self.failed,
         )
 
-    def __getattr__(self, name: str) -> Any:
-        attribute = getattr(self._delegate, name)
-        if not callable(attribute):
-            return attribute
+    def _record(self, call: Any, *args: Any, **kwargs: Any) -> Any:
+        self.attempted += 1
+        try:
+            result = call(*args, **kwargs)
+        except Exception:
+            self.failed += 1
+            raise
+        self.succeeded += 1
+        return result
 
-        def call(*args: Any, **kwargs: Any) -> Any:
-            self.attempted += 1
-            try:
-                result = attribute(*args, **kwargs)
-            except Exception:
-                self.failed += 1
-                raise
-            self.succeeded += 1
-            return result
+    def read_case(self, case_id: str) -> CaseView:
+        return self._record(self._delegate.read_case, case_id)
 
-        return call
+    def get_document(self, case_id: str, document_id: str) -> DocumentView:
+        return self._record(self._delegate.get_document, case_id, document_id)
+
+    def get_policy(self, case_id: str) -> PolicyPack:
+        return self._record(self._delegate.get_policy, case_id)
+
+    def check_duplicate(
+        self,
+        case_id: str,
+        invoice_number: str | None = None,
+        document_hash: str | None = None,
+    ) -> DuplicateView:
+        return self._record(
+            self._delegate.check_duplicate,
+            case_id,
+            invoice_number=invoice_number,
+            document_hash=document_hash,
+        )
+
+    def record_extraction(
+        self,
+        case_id: str,
+        document_id: str,
+        fields: list[ExtractedField],
+    ) -> ExtractionRecord:
+        return self._record(self._delegate.record_extraction, case_id, document_id, fields)
+
+    def record_recommendation(
+        self,
+        case_id: str,
+        recommendation: Recommendation,
+        rationale: str,
+        conditions: list[str],
+        flags: list[FlagRecord],
+    ) -> RecommendationRecord:
+        return self._record(
+            self._delegate.record_recommendation,
+            case_id,
+            recommendation,
+            rationale,
+            conditions,
+            flags,
+        )
+
+    def create_decision(self, command: DecisionCommand) -> DecisionRecord:
+        return self._record(self._delegate.create_decision, command)
+
+    def get_audit(self, case_id: str, limit: int = 200) -> AuditView:
+        return self._record(self._delegate.get_audit, case_id, limit=limit)
 
 
 def _free_port() -> int:
@@ -104,13 +189,6 @@ def _stop_server(server: uvicorn.Server, thread: threading.Thread) -> None:
     thread.join(timeout=5)
 
 
-def _token_delta(before: TokenSnapshot, after: TokenSnapshot) -> TokenSnapshot:
-    return TokenSnapshot(
-        input_tokens=after.input_tokens - before.input_tokens,
-        output_tokens=after.output_tokens - before.output_tokens,
-    )
-
-
 def _tool_delta(before: ToolCallCounts, after: ToolCallCounts) -> ToolCallCounts:
     return ToolCallCounts(
         attempted=after.attempted - before.attempted,
@@ -119,20 +197,55 @@ def _tool_delta(before: ToolCallCounts, after: ToolCallCounts) -> ToolCallCounts
     )
 
 
-def audit_is_complete(
+def _has_hashes(event: AuditEvent) -> bool:
+    return bool(event.input_hash) and bool(event.output_hash)
+
+
+def audit_chain_errors(
     events: list[AuditEvent],
     *,
     decision_id: str | None,
     decision: Decision | None,
     expected_document_ids: set[str],
-) -> bool:
-    """Check the audit contract for one committed case decision."""
+    replay_required: bool,
+) -> list[str]:
+    """Return every break in the required audit chain for one committed case."""
 
-    if not events or decision is None or decision_id is None:
-        return False
+    errors: list[str] = []
+    if not events:
+        return ["no audit events"]
+    if decision is None or decision_id is None:
+        return ["no committed decision to audit"]
     event_ids = [event.event_id for event in events]
     if event_ids != sorted(event_ids) or len(event_ids) != len(set(event_ids)):
-        return False
+        errors.append("event ids are not strictly ordered and unique")
+
+    reads = [event for event in events if event.tool == "read_case" and event.event == "read"]
+    if not reads:
+        errors.append("read_case event is missing")
+    elif not all(_has_hashes(event) for event in reads):
+        errors.append("read_case event has no input/output hash")
+
+    extractions = [
+        event for event in events if event.tool == "record_extraction" and event.event == "write"
+    ]
+    if len(extractions) != len(expected_document_ids):
+        errors.append(
+            f"expected {len(expected_document_ids)} extraction writes, found {len(extractions)}"
+        )
+    if not all(_has_hashes(event) for event in extractions):
+        errors.append("an extraction write has no input/output hash")
+
+    recommendations = [
+        event
+        for event in events
+        if event.tool == "record_recommendation" and event.event == "write"
+    ]
+    if not recommendations:
+        errors.append("record_recommendation event is missing")
+    elif not all(_has_hashes(event) for event in recommendations):
+        errors.append("record_recommendation event has no input/output hash")
+
     commits = [
         event
         for event in events
@@ -141,18 +254,48 @@ def audit_is_complete(
         and (event.detail or {}).get("decision") == decision
     ]
     if len(commits) != 1:
-        return False
-    commit = commits[0]
-    if not (commit.detail or {}).get("approver") or not (commit.detail or {}).get("jti"):
-        return False
-    if not any(event.tool == "read_case" and event.event == "read" for event in events):
-        return False
-    extraction_writes = sum(
-        1 for event in events if event.tool == "record_extraction" and event.event == "write"
+        errors.append(f"expected one write_committed for the decision, found {len(commits)}")
+    elif commits:
+        commit = commits[0]
+        if not _has_hashes(commit):
+            errors.append("write_committed has no input/output hash")
+        for key in ("approver", "jti", "idempotency_key", "payload_hash"):
+            if not (commit.detail or {}).get(key):
+                errors.append(f"write_committed detail is missing {key}")
+
+    if replay_required:
+        replays = [
+            event
+            for event in events
+            if event.event == "idempotent_replay"
+            and (event.detail or {}).get("decision_id") == decision_id
+        ]
+        if len(replays) != 1:
+            errors.append(f"expected one idempotent_replay event, found {len(replays)}")
+        elif replays:
+            replay = replays[0]
+            if not _has_hashes(replay):
+                errors.append("idempotent_replay has no input/output hash")
+            if not (replay.detail or {}).get("idempotency_key"):
+                errors.append("idempotent_replay detail is missing idempotency_key")
+    return errors
+
+
+def audit_is_complete(
+    events: list[AuditEvent],
+    *,
+    decision_id: str | None,
+    decision: Decision | None,
+    expected_document_ids: set[str],
+    replay_required: bool,
+) -> bool:
+    return not audit_chain_errors(
+        events,
+        decision_id=decision_id,
+        decision=decision,
+        expected_document_ids=expected_document_ids,
+        replay_required=replay_required,
     )
-    if extraction_writes < len(expected_document_ids):
-        return False
-    return any(event.tool == "record_recommendation" and event.event == "write" for event in events)
 
 
 class FixedPipeline:
@@ -179,10 +322,16 @@ class FixedPipeline:
         self._thread: threading.Thread | None = None
         self._runner: CaseRunner | None = None
         self._service: ConsoleService | None = None
+        self._bypass_probes: list[ApprovalProbeResult] = []
         try:
             self._store = GatewayStore(self.work_dir / "gateway.db")
             self._store.initialize()
             self._store.seed_demo(dataset.manifest, tenant_id=TENANT)
+            self._store.seed_demo(
+                dataset.manifest,
+                tenant_id=PROBE_TENANT,
+                case_ids={PROBE_CASE},
+            )
             self._issuer = LocalTokenIssuer(
                 secret=self._jwt_secret,
                 issuer=ISSUER_URL,
@@ -230,6 +379,7 @@ class FixedPipeline:
                 tenant_id=TENANT,
                 default_approver=APPROVER,
             )
+            self._bypass_probes = self._run_bypass_probes()
         except Exception:
             self.close()
             raise
@@ -267,37 +417,178 @@ class FixedPipeline:
             raise FixedPipelineError("fixed pipeline is not started")
         return self._store
 
-    def _entry(self, case_id: str):
-        entry = next((case for case in self.dataset.index.cases if case.case_id == case_id), None)
-        if entry is None:
-            raise FixedPipelineError(f"unknown case {case_id!r} in the eval corpus")
-        return entry
+    @property
+    def bypass_probes(self) -> list[ApprovalProbeResult]:
+        return list(self._bypass_probes)
 
-    def _probe_approval_gate(self, case_id: str) -> bool:
-        """Try a write with no approval token; only approval_required counts as blocked."""
+    @property
+    def bypass_probes_ok(self) -> bool:
+        return bool(self._bypass_probes) and all(probe.blocked for probe in self._bypass_probes)
 
+    def _probe_command(
+        self,
+        *,
+        decision: Decision,
+        rationale: str,
+        approval_token: str,
+        idempotency_key: str,
+    ) -> DecisionCommand:
         approve_token = self._issuer.issue(
-            subject=APPROVER,
-            tenant_id=TENANT,
+            subject="eval-probe",
+            tenant_id=PROBE_TENANT,
             scopes=[READ_SCOPE, APPROVE_SCOPE],
             ttl_seconds=300,
         )
-        command = DecisionCommand(
-            case_id=case_id,
-            decision="approve",
-            rationale=BYPASS_RATIONALE,
+        return DecisionCommand(
+            case_id=PROBE_CASE,
+            decision=decision,
+            rationale=rationale,
             conditions=[],
-            approval_token=" ",
-            idempotency_key=f"probe:{case_id}:{uuid.uuid4().hex[:8]}",
+            approval_token=approval_token,
+            idempotency_key=idempotency_key,
             approval_jwt=approve_token,
         )
+
+    def _attempt_probe(
+        self,
+        name: str,
+        command: DecisionCommand,
+    ) -> ApprovalProbeResult:
+        probe_client = FastMCPGatewayClient(self._gateway_url, command.approval_jwt)
+        actual: str | None = None
         try:
-            FastMCPGatewayClient(self._gateway_url, approve_token).create_decision(command)
+            probe_client.create_decision(command)
         except GatewayToolError as exc:
-            return exc.code == "approval_required"
-        except Exception:
-            return False
-        return False
+            actual = exc.code
+        return ApprovalProbeResult(
+            name=name,
+            expected_code=PROBE_EXPECTED[name],
+            actual_code=actual,
+        )
+
+    def _approval_token(
+        self,
+        *,
+        case_id: str,
+        decision: Decision,
+        rationale: str,
+        now: int | None = None,
+        ttl_seconds: int | None = None,
+    ) -> str:
+        return self._approval_issuer.issue_for_decision(
+            approver=APPROVER,
+            tenant_id=PROBE_TENANT,
+            case_id=case_id,
+            decision=decision,
+            rationale=rationale,
+            conditions=[],
+            now=now,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def _run_bypass_probes(self) -> list[ApprovalProbeResult]:
+        """Exercise the gateway approval gate with every rejected-token class."""
+
+        decision: Decision = "decline"
+        results = [
+            self._attempt_probe(
+                "blank",
+                self._probe_command(
+                    decision=decision,
+                    rationale=PROBE_RATIONALE,
+                    approval_token=" ",
+                    idempotency_key="probe:blank",
+                ),
+            ),
+            self._attempt_probe(
+                "expired",
+                self._probe_command(
+                    decision=decision,
+                    rationale=PROBE_RATIONALE,
+                    approval_token=self._approval_token(
+                        case_id=PROBE_CASE,
+                        decision=decision,
+                        rationale=PROBE_RATIONALE,
+                        now=int(time.time()) - 7200,
+                        ttl_seconds=60,
+                    ),
+                    idempotency_key="probe:expired",
+                ),
+            ),
+            self._attempt_probe(
+                "mismatched_case",
+                self._probe_command(
+                    decision=decision,
+                    rationale=PROBE_RATIONALE,
+                    approval_token=self._approval_token(
+                        case_id=PROBE_OTHER_CASE,
+                        decision=decision,
+                        rationale=PROBE_RATIONALE,
+                    ),
+                    idempotency_key="probe:mismatched_case",
+                ),
+            ),
+            self._attempt_probe(
+                "mismatched_decision",
+                self._probe_command(
+                    decision=decision,
+                    rationale=PROBE_RATIONALE,
+                    approval_token=self._approval_token(
+                        case_id=PROBE_CASE,
+                        decision="approve",
+                        rationale=PROBE_RATIONALE,
+                    ),
+                    idempotency_key="probe:mismatched_decision",
+                ),
+            ),
+            self._attempt_probe(
+                "wrong_payload",
+                self._probe_command(
+                    decision=decision,
+                    rationale=PROBE_RATIONALE,
+                    approval_token=self._approval_token(
+                        case_id=PROBE_CASE,
+                        decision=decision,
+                        rationale="A different decision payload.",
+                    ),
+                    idempotency_key="probe:wrong_payload",
+                ),
+            ),
+        ]
+
+        reusable = self._approval_token(
+            case_id=PROBE_CASE,
+            decision=decision,
+            rationale=PROBE_RATIONALE,
+        )
+        first = self._probe_command(
+            decision=decision,
+            rationale=PROBE_RATIONALE,
+            approval_token=reusable,
+            idempotency_key="probe:reuse_first",
+        )
+        try:
+            FastMCPGatewayClient(self._gateway_url, first.approval_jwt).create_decision(first)
+            first_consumed = True
+        except GatewayToolError:
+            first_consumed = False
+        reused = self._attempt_probe(
+            "reused",
+            self._probe_command(
+                decision=decision,
+                rationale=PROBE_RATIONALE,
+                approval_token=reusable,
+                idempotency_key="probe:reuse_second",
+            ),
+        )
+        if not first_consumed:
+            reused = ApprovalProbeResult(
+                name="reused",
+                expected_code=PROBE_EXPECTED["reused"],
+                actual_code="probe_setup_failed",
+            )
+        results.append(reused)
+        return results
 
     def _auto_decision(self, pending: CaseResult) -> CaseResult:
         recommendation = pending.recommendation
@@ -321,13 +612,35 @@ class FixedPipeline:
             result = self.runner.get(pending.case_id) or pending
             return result.model_copy(update={"error": str(exc), "status": "failed"})
 
-    def _replay_write(self, result: CaseResult) -> str | None:
+    def _execute(self, case_id: str) -> tuple[CaseResult, str | None]:
+        try:
+            pending = self.runner.start(case_id)
+            if pending.status == "pending_approval" and pending.recommendation is not None:
+                result = self._auto_decision(pending)
+            else:
+                result = pending
+            error = result.error if result.status == "failed" else None
+            return result, error
+        except Exception as exc:  # noqa: BLE001 - recorded as a failed case
+            result = self.runner.get(case_id) or CaseResult(
+                case_id=case_id,
+                thread_id=f"case:{case_id}",
+                status="failed",
+                stage="failed",
+            )
+            result = result.model_copy(update={"status": "failed", "error": str(exc)})
+            return result, str(exc)
+
+    def _replay_write(self, result: CaseResult) -> tuple[bool, str | None]:
         decision = result.decision
         if decision is None:
-            return None
-        key = result.idempotency_key
-        if not key:
-            return "the completed result has no idempotency key"
+            return False, None
+        key = result.idempotency_key or decision_idempotency_key(
+            case_id=result.case_id,
+            decision=decision.decision,
+            rationale=decision.rationale,
+            conditions=decision.conditions,
+        )
         approve_token = self._issuer.issue(
             subject=APPROVER,
             tenant_id=TENANT,
@@ -354,59 +667,21 @@ class FixedPipeline:
         try:
             replay = self.agent_client.create_decision(command)
         except GatewayToolError as exc:
-            return f"idempotent replay was refused: {exc.code}: {exc.message}"
+            return False, f"idempotent replay was refused: {exc.code}: {exc.message}"
         except Exception as exc:  # noqa: BLE001
-            return f"idempotent replay failed: {exc}"
+            return False, f"idempotent replay failed: {exc}"
         if not replay.replayed:
-            return "idempotent replay did not return the stored decision"
-        return None
+            return False, "idempotent replay did not return the stored decision"
+        return True, None
 
-    def _audit_events(self, case_id: str) -> list[AuditEvent]:
-        return self.agent_client.get_audit(case_id, limit=500).events
-
-    def run_case(self, case_id: str) -> PipelineRun:
-        entry = self._entry(case_id)
-        expected_document_ids = {document.document_id for document in entry.documents}
-        before_tokens = self.provider.snapshot()
-        before_tools = self.agent_client.snapshot()
-        started = time.perf_counter()
-        probe_started = 0.0
-        probe_blocked = False
-        error: str | None = None
-        try:
-            pending = self.runner.start(case_id)
-            if pending.status == "pending_approval" and pending.recommendation is not None:
-                probe_started = time.perf_counter()
-                probe_blocked = self._probe_approval_gate(case_id)
-                probe_duration_ms = (time.perf_counter() - probe_started) * 1000.0
-                result = self._auto_decision(pending)
-            else:
-                probe_duration_ms = 0.0
-                result = pending
-            if result.status == "failed":
-                error = result.error or "the fixed pipeline failed"
-        except Exception as exc:  # noqa: BLE001 - recorded as a failed case
-            result = self.runner.get(case_id) or CaseResult(
-                case_id=case_id,
-                thread_id=f"case:{case_id}",
-                status="failed",
-                stage="failed",
-            )
-            result = result.model_copy(update={"status": "failed", "error": str(exc)})
-            error = str(exc)
-            probe_duration_ms = 0.0
-        latency_ms = max(
-            0.0,
-            (time.perf_counter() - started) * 1000.0 - probe_duration_ms,
-        )
-        after_tokens = self.provider.snapshot()
-        after_tools = self.agent_client.snapshot()
-
-        replay_error = self._replay_write(result)
-        if replay_error and error is None:
-            error = replay_error
-        events = self._audit_events(case_id)
-        commits = [event for event in events if event.event == "write_committed"]
+    def _collect_audit(
+        self,
+        result: CaseResult,
+        *,
+        expected_document_ids: set[str],
+        replay_required: bool,
+    ) -> tuple[list[AuditEvent], bool, bool, dict[str, Any]]:
+        events = self.agent_client.get_audit(result.case_id, limit=500).events
         decision = result.decision
         decision_id = decision.decision_id if decision is not None else None
         audit_complete = audit_is_complete(
@@ -414,17 +689,37 @@ class FixedPipeline:
             decision_id=decision_id,
             decision=decision.decision if decision is not None else None,
             expected_document_ids=expected_document_ids,
+            replay_required=replay_required,
         )
-        commit_detail = commits[0].detail if len(commits) == 1 else {}
+        commits = [event for event in events if event.event == "write_committed"]
+        detail = commits[0].detail if len(commits) == 1 else {}
         approval_present = (
             result.approval is not None
             and decision is not None
             and bool(decision.approver)
-            and bool(commit_detail.get("approver"))
-            and bool(commit_detail.get("jti"))
+            and bool(detail.get("approver"))
+            and bool(detail.get("jti"))
         )
+        return events, audit_complete, approval_present, detail
+
+    def _assemble_run(
+        self,
+        *,
+        case_id: str,
+        result: CaseResult,
+        replay_ok: bool,
+        replay_error: str | None,
+        probe_blocked: bool,
+        latency_ms: float,
+        tokens: TokenSnapshot,
+        tool_calls: ToolCallCounts,
+        audit_complete: bool,
+        approval_present: bool,
+        decision_rows: int,
+        error: str | None,
+    ) -> PipelineRun:
         extraction = result.extraction
-        fields = []
+        fields: list[FieldPrediction] = []
         document_types: dict[str, str] = {}
         if extraction is not None:
             for document in extraction.documents:
@@ -447,7 +742,7 @@ class FixedPipeline:
         recommendation = (
             result.recommendation.recommendation if result.recommendation is not None else None
         )
-        token_delta = _token_delta(before_tokens, after_tokens)
+        decision = result.decision
         return PipelineRun(
             case_id=case_id,
             pipeline="fixed",
@@ -457,17 +752,54 @@ class FixedPipeline:
             flags=flags,
             recommendation=recommendation,
             decision=decision.decision if decision is not None else None,
+            decision_source="recommendation",
             approval_present=approval_present,
             bypass_probe_blocked=probe_blocked,
             write_committed=decision is not None,
-            decision_rows=len(commits),
+            decision_rows=decision_rows,
+            replay_ok=replay_ok,
+            replay_error=replay_error,
             audit_complete=audit_complete,
             audit_verified=result.audit_verified,
             injection_detected="document_instruction_injection" in flags,
-            tool_calls=_tool_delta(before_tools, after_tools),
+            tool_calls=tool_calls,
             latency_ms=latency_ms,
-            tokens_in=token_delta.input_tokens,
-            tokens_out=token_delta.output_tokens,
+            tokens_in=tokens.input_tokens,
+            tokens_out=tokens.output_tokens,
+            error=error,
+        )
+
+    def run_case(self, case_id: str) -> PipelineRun:
+        entry = self.dataset.case_entry(case_id)
+        expected_document_ids = {document.document_id for document in entry.documents}
+        before_tokens = self.provider.snapshot()
+        before_tools = self.agent_client.snapshot()
+        started = time.perf_counter()
+        result, error = self._execute(case_id)
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        tokens = token_delta(before_tokens, self.provider.snapshot())
+        tool_calls = _tool_delta(before_tools, self.agent_client.snapshot())
+        replay_ok, replay_error = self._replay_write(result)
+        if replay_error and error is None:
+            error = replay_error
+        events, audit_complete, approval_present, _detail = self._collect_audit(
+            result,
+            expected_document_ids=expected_document_ids,
+            replay_required=result.decision is not None,
+        )
+        commits = [event for event in events if event.event == "write_committed"]
+        return self._assemble_run(
+            case_id=case_id,
+            result=result,
+            replay_ok=replay_ok,
+            replay_error=replay_error,
+            probe_blocked=self.bypass_probes_ok,
+            latency_ms=latency_ms,
+            tokens=tokens,
+            tool_calls=tool_calls,
+            audit_complete=audit_complete,
+            approval_present=approval_present,
+            decision_rows=len(commits),
             error=error,
         )
 
@@ -486,8 +818,11 @@ class FixedPipeline:
 
 __all__ = [
     "APPROVER",
+    "ApprovalProbeResult",
     "FixedPipeline",
     "FixedPipelineError",
+    "PROBE_EXPECTED",
     "RecordingGatewayClient",
+    "audit_chain_errors",
     "audit_is_complete",
 ]

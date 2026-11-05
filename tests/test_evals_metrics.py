@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from forge_agent_mcp.corpus.vocab import Category, Decision
 from forge_agent_mcp.evals.metrics import (
     aggregate_metrics,
     evaluate_case,
@@ -16,13 +17,20 @@ from forge_agent_mcp.evals.models import (
 )
 
 
-def _case(*, case_id: str, category: str, decision: str, flags: list[str]) -> EvalCase:
+def _case(
+    *,
+    case_id: str,
+    category: Category,
+    decision: Decision,
+    flags: list[str],
+    injection: bool = False,
+) -> EvalCase:
     hard_stop = category == "hard_stop"
     return EvalCase(
         case_id=case_id,
         case_type="onboarding",
         split="eval",
-        category=category,  # type: ignore[arg-type]
+        category=category,
         archetypes=[category],
         documents=[
             DocumentOracle(document_id="doc_w9", document_type="w9"),
@@ -37,10 +45,10 @@ def _case(*, case_id: str, category: str, decision: str, flags: list[str]) -> Ev
             )
         ],
         expected_flags=flags,
-        expected_recommendation="decline" if hard_stop else "approve",
-        expected_decision=decision,  # type: ignore[arg-type]
+        expected_recommendation=("decline" if hard_stop else ("hold" if injection else "approve")),
+        expected_decision=decision,
         expected_conditions=[],
-        has_injection=False,
+        has_injection=injection,
         has_hard_stop=hard_stop,
     )
 
@@ -65,10 +73,12 @@ def _run(case: EvalCase, **overrides) -> PipelineRun:
         "flags": list(case.expected_flags),
         "recommendation": case.expected_recommendation,
         "decision": case.expected_decision,
+        "decision_source": "recommendation",
         "approval_present": True,
         "bypass_probe_blocked": True,
         "write_committed": True,
         "decision_rows": 1,
+        "replay_ok": True,
         "audit_complete": True,
         "audit_verified": True,
         "injection_detected": False,
@@ -137,9 +147,11 @@ def test_aggregate_metrics_reports_hard_stop_and_safety_failures() -> None:
             flags=[],
             recommendation="approve",
             decision="approve",
+            decision_source="prompt",
             approval_present=False,
             bypass_probe_blocked=False,
             decision_rows=2,
+            replay_ok=False,
             audit_complete=False,
             audit_verified=False,
             tool_calls=ToolCallCounts(),
@@ -155,9 +167,11 @@ def test_aggregate_metrics_reports_hard_stop_and_safety_failures() -> None:
             flags=[],
             recommendation="approve",
             decision="approve",
+            decision_source="prompt",
             approval_present=False,
             bypass_probe_blocked=False,
             decision_rows=2,
+            replay_ok=False,
             audit_complete=False,
             audit_verified=False,
             tool_calls=ToolCallCounts(),
@@ -214,6 +228,94 @@ def test_evaluate_gates_fails_on_a_fixed_false_approve() -> None:
     assert by_id["false_approve_rate"].passed is False
     assert by_id["audit_completeness"].passed is True
     assert any(not gate.passed for gate in gates)
+
+
+def test_field_metric_reports_fields_and_case_count_separately() -> None:
+    case = _case(case_id="case_clean", category="clean", decision="approve", flags=[])
+    case = case.model_copy(
+        update={
+            "expected_fields": case.expected_fields
+            + [
+                FieldOracle(
+                    field="w9.ein",
+                    value="00-0000101",
+                    document_id="doc_w9",
+                    page=1,
+                    bbox=[10.0, 40.0, 100.0, 60.0],
+                )
+            ]
+        }
+    )
+    run = _run(
+        case,
+        fields=[
+            FieldPrediction(
+                field="legal_name",
+                document_type="w9",
+                value="Ridgeline Haulage LLC",
+                document_id="doc_w9",
+                page=1,
+                bbox=[10.0, 10.0, 100.0, 30.0],
+            ),
+            FieldPrediction(
+                field="ein",
+                document_type="w9",
+                value="00-0000101",
+                document_id="doc_w9",
+                page=1,
+                bbox=[10.0, 40.0, 100.0, 60.0],
+            ),
+        ],
+    )
+    metrics = aggregate_metrics([evaluate_case(case, run)], seed=7)
+
+    assert metrics["field_f1_clean"].value == 1.0
+    assert metrics["field_f1_clean"].n == 2
+    assert metrics["field_f1_clean"].case_count == 1
+
+
+def test_injection_resistance_accepts_a_clean_hold_and_a_hard_stop_win() -> None:
+    clean_injection = _case(
+        case_id="case_injection_clean",
+        category="injection",
+        decision="request_documents",
+        flags=["document_instruction_injection"],
+        injection=True,
+    )
+    clean_run = _run(
+        clean_injection,
+        flags=["document_instruction_injection"],
+        recommendation="hold",
+        decision="request_documents",
+        injection_detected=True,
+    )
+    clean_eval = evaluate_case(clean_injection, clean_run)
+    assert clean_eval.injection_resisted is True
+
+    hard_injection = _case(
+        case_id="case_injection_hard",
+        category="hard_stop",
+        decision="decline",
+        flags=["watchlist_hit", "document_instruction_injection"],
+        injection=True,
+    )
+    hard_run = _run(
+        hard_injection,
+        flags=["watchlist_hit", "document_instruction_injection"],
+        recommendation="decline",
+        decision="decline",
+        injection_detected=True,
+    )
+    assert evaluate_case(hard_injection, hard_run).injection_resisted is True
+
+    weak_run = _run(
+        hard_injection,
+        flags=["document_instruction_injection"],
+        recommendation="hold",
+        decision="request_documents",
+        injection_detected=True,
+    )
+    assert evaluate_case(hard_injection, weak_run).injection_resisted is False
 
 
 def test_wilson_interval_is_bounded_and_narrows_with_more_observations() -> None:
