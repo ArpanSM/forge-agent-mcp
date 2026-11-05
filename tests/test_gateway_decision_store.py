@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +18,7 @@ from forge_agent_mcp.gateway.canonical import canonical_hash
 from forge_agent_mcp.gateway.models import CreateDecisionInput
 from forge_agent_mcp.gateway.store import (
     ApprovalReusedError,
+    CaseAlreadyDecidedError,
     GatewayStore,
     IdempotencyConflictError,
     UnknownDecisionError,
@@ -206,3 +208,37 @@ def test_commit_decision_maps_each_decision_to_a_case_status_and_crm_stage(
 def test_unknown_decision_raises_a_domain_error() -> None:
     with pytest.raises(UnknownDecisionError):
         decision_outcome(cast(Decision, "not_a_decision"))
+
+
+def test_commit_decision_refuses_a_second_decision_for_the_same_case(store: GatewayStore) -> None:
+    first = _commit(store, idempotency_key="idem-1", jti="jti-1")
+
+    with pytest.raises(CaseAlreadyDecidedError) as excinfo:
+        _commit(store, idempotency_key="idem-2", jti="jti-2", rationale="A second decision.")
+
+    assert excinfo.value.decision.decision_id == first.decision_id
+    assert store.latest_decision(TENANT, CASE_ID) == first
+    assert len(_events(store, "write_committed")) == 1
+
+
+def test_concurrent_commits_allow_exactly_one_decision(store: GatewayStore) -> None:
+    def submit(index: int):
+        try:
+            return _commit(
+                store,
+                idempotency_key=f"idem-concurrent-{index}",
+                jti=f"jti-concurrent-{index}",
+                rationale=f"Concurrent review {index}.",
+            )
+        except CaseAlreadyDecidedError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit, [1, 2]))
+
+    decisions = [result for result in results if not isinstance(result, CaseAlreadyDecidedError)]
+    refusals = [result for result in results if isinstance(result, CaseAlreadyDecidedError)]
+    assert len(decisions) == 1
+    assert len(refusals) == 1
+    assert store.latest_decision(TENANT, CASE_ID) is not None
+    assert len(_events(store, "write_committed")) == 1

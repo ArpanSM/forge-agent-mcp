@@ -38,8 +38,10 @@ Every tool has a Pydantic input and output contract, a result envelope
 (`ok`, `data`, `error_code`, `message`), and MCP annotations. Business errors return
 `isError: true` with a stable code such as `case_not_found`, `document_not_found`,
 `invalid_citation`, `invalid_evidence`, `invalid_request`, `approval_required`,
-`approval_malformed`, `approval_expired`, `approval_mismatch`, `approval_reused` or
-`idempotency_conflict`; protocol errors remain protocol errors. `tools/list` follows
+`approval_malformed`, `approval_expired`, `approval_mismatch`, `approval_reused`,
+`idempotency_conflict` or `case_already_decided`; protocol errors remain protocol errors.
+`case_already_decided` returns the existing decision in the envelope data so a caller can
+reconcile instead of writing again. `tools/list` follows
 registration order and is deterministic.
 
 `get_policy` filters the global flag catalog by case type: onboarding never advertises
@@ -110,6 +112,10 @@ status, approval use, idempotency row and `write_committed` audit row.
   when the original token has expired or was consumed.
 - Only successful commits store an idempotency result, so a refused approval leaves the
   key free for a retry.
+- A unique index and an in-transaction check allow exactly one decision per
+  `(tenant, case)`. A second valid approval with a new key and token returns
+  `case_already_decided` and the existing decision; the decision, CRM stage, approval use,
+  idempotency row and audit row are unchanged.
 
 `make write-demo` runs the whole path against a local server and prints the audit chain:
 omitted/empty approval -> refusal, valid approval -> commit, same key -> replay, changed
