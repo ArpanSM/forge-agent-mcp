@@ -2,8 +2,10 @@
 
 Stage boundaries are graph nodes so a checkpoint shows exactly how far a case
 got: intake/classify -> extract -> validate -> cross-check -> summarise ->
-human approval -> execute via MCP -> audit/close. Only the last three stages can
-write, and the decision write is the gateway's single idempotent transaction.
+human approval -> execute via MCP -> audit/close. The full validators run in
+``validate``; ``cross_check`` adds the gateway's tenant-wide duplicate check and
+evidence reconciliation. Only the last three stages can write, and the decision
+write is the gateway's single idempotent transaction.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import operator
 import sqlite3
 import threading
+import uuid
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -23,20 +26,39 @@ from langgraph.types import Command, interrupt
 from ..corpus.vocab import CaseType
 from ..extraction.extractor import extract_case
 from ..extraction.models import CaseExtraction
+from ..gateway.approval import decision_payload_hash
 from ..gateway.models import CaseView, DuplicateView, PolicyPack
 from ..providers.base import ChatProvider
 from ..rules.corpus import load_case_packet
 from ..rules.engine import recommend, validate
 from ..rules.models import CaseReview, Evidence, RecommendationResult, RuleFlag
 from ..rules.validators import find_missing_documents
-from .gateway import GatewayClient, GatewayToolError
+from .gateway import (
+    CaseAlreadyDecidedError,
+    DecisionCommand,
+    GatewayClient,
+    GatewayToolError,
+)
 from .models import (
     ApprovalAction,
+    ApprovalDecision,
+    ApprovalFailure,
     ApprovalRequest,
     CaseResult,
     decision_idempotency_key,
     gateway_fields,
     gateway_flag,
+)
+from .tokens import ApprovalTokenVault
+
+RETRYABLE_APPROVAL_CODES = frozenset(
+    {
+        "approval_required",
+        "approval_malformed",
+        "approval_expired",
+        "approval_mismatch",
+        "approval_reused",
+    }
 )
 
 
@@ -48,12 +70,14 @@ class CaseGraphState(TypedDict, total=False):
     policy: dict[str, Any]
     extraction: dict[str, Any]
     review: dict[str, Any]
-    gaps: list[str]
     flags: list[dict[str, Any]]
     cross_check: dict[str, Any] | None
     recommendation: dict[str, Any]
     approval_request: dict[str, Any]
     approval: dict[str, Any]
+    approval_failure: dict[str, Any]
+    approval_invalid: bool
+    approval_attempts: int
     decision: dict[str, Any]
     idempotency_key: str
     audit: list[dict[str, Any]]
@@ -143,15 +167,34 @@ def _verify_audit(events: list[Any], decision: dict[str, Any] | None) -> bool:
     return len(commits) == 1
 
 
+def _approval_failure(
+    *,
+    code: str,
+    message: str,
+    attempts: int,
+) -> dict[str, Any]:
+    return {
+        "approval_failure": ApprovalFailure(
+            code=code,
+            message=message,
+            attempts=attempts,
+        ).model_dump(mode="json"),
+        "approval_attempts": attempts,
+        "approval_invalid": False,
+    }
+
+
 def build_case_graph(
     gateway: GatewayClient,
     *,
     corpus_dir: str | Path,
     provider: ChatProvider | None = None,
+    vault: ApprovalTokenVault | None = None,
 ) -> StateGraph:
     """Build the uncompiled eight-stage graph over one gateway client."""
 
     root = Path(corpus_dir)
+    token_vault = vault or ApprovalTokenVault()
 
     def intake(state: CaseGraphState) -> dict[str, Any]:
         case_id = state["case_id"]
@@ -195,7 +238,6 @@ def build_case_graph(
             case = CaseView.model_validate(state["case"])
             packet = load_case_packet(case_id, root)
             flags = validate(extraction, packet)
-            gaps = _evidence_gaps(extraction, packet)
             review = _review(
                 case_id=case_id,
                 case_type=case.case_type,
@@ -209,7 +251,6 @@ def build_case_graph(
         return {
             "review": review.model_dump(mode="json"),
             "flags": [flag.model_dump(mode="json") for flag in flags],
-            "gaps": gaps,
             "recommendation": review.recommendation.model_dump(mode="json"),
             "transitions": ["validate"],
         }
@@ -301,50 +342,102 @@ def build_case_graph(
         }
 
     def human_approval(state: CaseGraphState) -> dict[str, Any]:
-        if state.get("error"):
-            return {"transitions": ["human_approval"]}
+        """Record the approval stage before the wait node interrupts."""
+
+        del state
+        return {
+            "approval": None,
+            "approval_invalid": False,
+            "transitions": ["human_approval"],
+        }
+
+    def await_approval(state: CaseGraphState) -> dict[str, Any]:
         request = state.get("approval_request")
         if request is None:
-            return {"error": "no approval request was produced", "transitions": ["human_approval"]}
+            return {
+                "error": "no approval request was produced",
+                "transitions": [],
+            }
         response = interrupt(request)
         try:
-            action = ApprovalAction.model_validate(response)
+            decision = ApprovalDecision.model_validate(response)
         except Exception as exc:  # noqa: BLE001
+            attempts = int(state.get("approval_attempts", 0)) + 1
             return {
-                "error": f"invalid approval response: {_error_text(exc)}",
-                "transitions": ["human_approval"],
+                **_approval_failure(
+                    code="invalid_approval",
+                    message=f"invalid approval response: {_error_text(exc)}",
+                    attempts=attempts,
+                ),
+                "approval_invalid": True,
+                "approval": None,
             }
         return {
-            "approval": action.model_dump(mode="json"),
-            "transitions": ["human_approval"],
+            "approval": decision.model_dump(mode="json"),
+            "approval_failure": None,
+            "approval_invalid": False,
         }
 
     def execute(state: CaseGraphState) -> dict[str, Any]:
         if state.get("error"):
             return {"transitions": ["execute"]}
         case_id = state["case_id"]
-        try:
-            action = ApprovalAction.model_validate(state["approval"])
-            key = decision_idempotency_key(
+        approval = ApprovalDecision.model_validate(state["approval"])
+        tokens = token_vault.take(approval.approval_reference)
+        if tokens is None:
+            attempts = int(state.get("approval_attempts", 0)) + 1
+            return {
+                **_approval_failure(
+                    code="approval_required",
+                    message=(
+                        "The approval context is no longer available; request a fresh approval."
+                    ),
+                    attempts=attempts,
+                ),
+                "transitions": ["execute"],
+            }
+        command = DecisionCommand(
+            case_id=case_id,
+            decision=approval.action,
+            rationale=approval.rationale,
+            conditions=approval.conditions,
+            approval_token=tokens.approval_token,
+            idempotency_key=decision_idempotency_key(
                 case_id=case_id,
-                decision=action.action,
-                rationale=action.rationale,
-                conditions=action.conditions,
-            )
-            decision = gateway.create_decision(
-                case_id,
-                action.action,
-                action.rationale,
-                action.conditions,
-                approval_token=action.approval_token,
-                idempotency_key=key,
-                approval_jwt=action.approval_jwt,
-            )
+                decision=approval.action,
+                rationale=approval.rationale,
+                conditions=approval.conditions,
+            ),
+            approval_jwt=tokens.approval_jwt,
+        )
+        try:
+            decision = gateway.create_decision(command)
+        except CaseAlreadyDecidedError as exc:
+            return {
+                "decision": exc.decision.model_dump(mode="json"),
+                "approval_failure": None,
+                "transitions": ["execute"],
+            }
+        except GatewayToolError as exc:
+            if exc.code in RETRYABLE_APPROVAL_CODES:
+                attempts = int(state.get("approval_attempts", 0)) + 1
+                return {
+                    **_approval_failure(
+                        code=exc.code,
+                        message=exc.message,
+                        attempts=attempts,
+                    ),
+                    "transitions": ["execute"],
+                }
+            return {
+                "error": _error_text(exc),
+                "transitions": ["execute"],
+            }
         except Exception as exc:  # noqa: BLE001
             return {"error": _error_text(exc), "transitions": ["execute"]}
         return {
             "decision": decision.model_dump(mode="json"),
-            "idempotency_key": key,
+            "approval_failure": None,
             "transitions": ["execute"],
         }
 
@@ -378,6 +471,16 @@ def build_case_graph(
 
         return route
 
+    def after_await(state: CaseGraphState) -> str:
+        return "human_approval" if state.get("approval_invalid") else "execute"
+
+    def after_execute(state: CaseGraphState) -> str:
+        if state.get("error"):
+            return "audit_close"
+        if state.get("approval_failure"):
+            return "human_approval"
+        return "audit_close"
+
     builder = StateGraph(CaseGraphState)
     builder.add_node("intake", intake)
     builder.add_node("extract", extract)
@@ -385,6 +488,7 @@ def build_case_graph(
     builder.add_node("cross_check", cross_check)
     builder.add_node("summarise", summarise)
     builder.add_node("human_approval", human_approval)
+    builder.add_node("await_approval", await_approval)
     builder.add_node("execute", execute)
     builder.add_node("audit_close", audit_close)
     builder.add_node("failed", failed)
@@ -397,8 +501,9 @@ def build_case_graph(
     builder.add_conditional_edges(
         "summarise", next_after("human_approval"), ["human_approval", "failed"]
     )
-    builder.add_conditional_edges("human_approval", next_after("execute"), ["execute", "failed"])
-    builder.add_edge("execute", "audit_close")
+    builder.add_edge("human_approval", "await_approval")
+    builder.add_conditional_edges("await_approval", after_await, ["execute", "human_approval"])
+    builder.add_conditional_edges("execute", after_execute, ["audit_close", "human_approval"])
     builder.add_edge("audit_close", END)
     builder.add_edge("failed", END)
     return builder
@@ -422,10 +527,12 @@ class CaseRunner:
         self._lock = threading.RLock()
         self._connection = sqlite3.connect(self.checkpoint_path, check_same_thread=False)
         self._saver = SqliteSaver(self._connection)
+        self._vault = ApprovalTokenVault()
         self._graph = build_case_graph(
             gateway,
             corpus_dir=self.corpus_dir,
             provider=provider,
+            vault=self._vault,
         ).compile(checkpointer=self._saver)
 
     def close(self) -> None:
@@ -449,6 +556,24 @@ class CaseRunner:
     def get(self, case_id: str) -> CaseResult | None:
         return self._result(case_id)
 
+    def state(self, case_id: str) -> dict[str, Any]:
+        """Return the persisted graph state values for diagnostics and tests."""
+
+        with self._lock:
+            snapshot = self._graph.get_state(self._config(case_id))
+        return dict(snapshot.values)
+
+    def _mark_failed(self, case_id: str, error: str) -> None:
+        try:
+            with self._lock:
+                self._graph.update_state(
+                    self._config(case_id),
+                    {"error": error, "transitions": ["failed"]},
+                    as_node="failed",
+                )
+        except Exception:  # noqa: BLE001 - the caller still returns a failed result
+            pass
+
     def start(self, case_id: str) -> CaseResult:
         existing = self._result(case_id)
         if existing is not None and existing.status != "not_started":
@@ -464,13 +589,15 @@ class CaseRunner:
                     config=self._config(case_id),
                 )
         except Exception as exc:  # noqa: BLE001 - surfaced as a failed case result
+            error = _error_text(exc)
+            self._mark_failed(case_id, error)
             result = self._result(case_id) or CaseResult(
                 case_id=case_id,
                 thread_id=_thread_id(case_id),
                 status="failed",
                 stage="failed",
             )
-            return result.model_copy(update={"status": "failed", "error": _error_text(exc)})
+            return result.model_copy(update={"status": "failed", "error": error})
         result = self._result(case_id)
         if result is None:
             return CaseResult(
@@ -488,23 +615,119 @@ class CaseRunner:
             raise CaseRunError(f"case {case_id!r} has not been started")
         if current.decision is not None:
             return current
+        if current.status == "failed":
+            raise CaseRunError(f"case {case_id!r} failed and must be retried")
         if current.status != "pending_approval":
             raise CaseRunError(f"case {case_id!r} is not waiting for approval")
-        payload = (
-            action.model_dump(mode="json")
-            if isinstance(action, ApprovalAction)
-            else ApprovalAction.model_validate(action).model_dump(mode="json")
+
+        try:
+            view = self.gateway.read_case(case_id)
+        except GatewayToolError:
+            view = None
+        if view is not None and view.decision is not None:
+            reconciled = self.reconcile(case_id, view)
+            if reconciled is not None:
+                return reconciled
+
+        action_model = (
+            action if isinstance(action, ApprovalAction) else ApprovalAction.model_validate(action)
+        )
+        reference = f"approval:{uuid.uuid4().hex}"
+        self._vault.put(
+            reference,
+            approval_token=action_model.approval_token,
+            approval_jwt=action_model.approval_jwt,
+        )
+        payload = ApprovalDecision(
+            action=action_model.action,
+            approver=action_model.approver,
+            rationale=action_model.rationale,
+            conditions=action_model.conditions,
+            note=action_model.note,
+            approval_reference=reference,
+            payload_hash=decision_payload_hash(
+                case_id=case_id,
+                decision=action_model.action,
+                rationale=action_model.rationale,
+                conditions=action_model.conditions,
+            ),
         )
         try:
             with self._lock:
-                self._graph.invoke(Command(resume=payload), config=self._config(case_id))
+                latest = self._result(case_id)
+                if latest is not None and latest.decision is not None:
+                    return latest
+                try:
+                    live = self.gateway.read_case(case_id)
+                except GatewayToolError:
+                    live = None
+                if live is not None and live.decision is not None:
+                    reconciled = self.reconcile(case_id, live)
+                    if reconciled is not None:
+                        return reconciled
+                if latest is None or latest.status != "pending_approval":
+                    raise CaseRunError(f"case {case_id!r} is not waiting for approval")
+                self._graph.invoke(
+                    Command(resume=payload.model_dump(mode="json")),
+                    config=self._config(case_id),
+                )
+        except CaseRunError:
+            raise
         except Exception as exc:  # noqa: BLE001
+            error = _error_text(exc)
             result = self._result(case_id) or current
-            return result.model_copy(update={"status": "failed", "error": _error_text(exc)})
+            if result.decision is None:
+                self._mark_failed(case_id, error)
+                result = self._result(case_id) or result
+            return result.model_copy(update={"status": "failed", "error": error})
+        finally:
+            self._vault.discard(reference)
         result = self._result(case_id)
         if result is None:
             return current.model_copy(update={"status": "failed", "error": "no state"})
         return result
 
+    def reconcile(self, case_id: str, view: CaseView | None = None) -> CaseResult | None:
+        """Adopt a gateway decision that committed before the checkpoint advanced."""
 
-__all__ = ["CaseGraphState", "CaseRunError", "CaseRunner", "build_case_graph"]
+        current = self._result(case_id)
+        if current is None:
+            return None
+        if current.decision is not None and current.audit_verified:
+            return current
+        view = view or self.gateway.read_case(case_id)
+        if view.decision is None:
+            return current
+        audit = self.gateway.get_audit(case_id, limit=200)
+        decision = view.decision.model_dump(mode="json")
+        values: dict[str, Any] = {
+            "decision": decision,
+            "case": view.model_dump(mode="json"),
+            "audit": [event.model_dump(mode="json") for event in audit.events],
+            "audit_verified": _verify_audit(audit.events, decision),
+            "approval_failure": None,
+            "error": None,
+            "transitions": ["reconcile"],
+        }
+        with self._lock:
+            self._graph.update_state(
+                self._config(case_id),
+                values,
+                as_node="audit_close",
+            )
+        return self._result(case_id)
+
+    def reset(self, case_id: str) -> None:
+        """Delete a failed thread so the case can be started again."""
+
+        with self._lock:
+            self._saver.delete_thread(_thread_id(case_id))
+
+
+__all__ = [
+    "CaseGraphState",
+    "CaseRunError",
+    "CaseRunner",
+    "RETRYABLE_APPROVAL_CODES",
+    "build_case_graph",
+]

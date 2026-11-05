@@ -13,17 +13,20 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from ..corpus.vocab import CaseType, Decision, Recommendation, StrictModel
+from ..corpus.vocab import CaseType, Decision, StrictModel
 from ..extraction.models import CaseExtraction
 from ..gateway.models import (
     AuditEvent,
     CaseDocumentView,
     CaseView,
+    CitationView,
     DecisionRecord,
     DuplicateView,
     ExtractedField,
+    FlagRecord,
     PolicyPack,
 )
+from ..gateway.store import decision_outcome
 from ..rules.models import CaseReview, RecommendationResult, RuleFlag
 
 CaseRunStatus = Literal[
@@ -52,6 +55,31 @@ class ApprovalAction(StrictModel):
     note: str = ""
     approval_token: str = Field(min_length=1)
     approval_jwt: str = Field(min_length=1)
+
+
+class ApprovalDecision(StrictModel):
+    """The safe, persisted part of a human decision.
+
+    The HMAC approval token and the ``freight:approve`` bearer token are held in
+    the runner's transient token vault, never in graph state. This model keeps
+    the vault reference and the payload hash for audit correlation.
+    """
+
+    action: Decision
+    approver: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    conditions: list[str] = Field(default_factory=list)
+    note: str = ""
+    approval_reference: str = Field(min_length=1)
+    payload_hash: str = Field(min_length=64, max_length=64)
+
+
+class ApprovalFailure(StrictModel):
+    """A refused approval attempt that the reviewer can retry."""
+
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    attempts: int = Field(default=1, ge=1)
 
 
 class ApprovalRequest(StrictModel):
@@ -97,7 +125,8 @@ class CaseResult(StrictModel):
     recommendation: RecommendationResult | None = None
     cross_check: DuplicateView | None = None
     approval_request: ApprovalRequest | None = None
-    approval: ApprovalAction | None = None
+    approval: ApprovalDecision | None = None
+    approval_failure: ApprovalFailure | None = None
     decision: DecisionRecord | None = None
     idempotency_key: str | None = None
     audit: list[AuditEvent] = Field(default_factory=list)
@@ -107,22 +136,6 @@ class CaseResult(StrictModel):
     @property
     def case_type(self) -> CaseType | None:
         return self.case.case_type if self.case is not None else None
-
-    @property
-    def recommendation_value(self) -> Recommendation | None:
-        return self.recommendation.recommendation if self.recommendation else None
-
-    @property
-    def flags_by_severity(self) -> dict[str, list[RuleFlag]]:
-        grouped: dict[str, list[RuleFlag]] = {
-            "hard_stop": [],
-            "high": [],
-            "medium": [],
-            "low": [],
-        }
-        for flag in self.flags:
-            grouped[flag.severity].append(flag)
-        return grouped
 
     def fields(self) -> list[ExtractedFieldView]:
         """Flatten extraction fields for a citation table, in packet order."""
@@ -170,7 +183,8 @@ class CaseResult(StrictModel):
             recommendation=_model(RecommendationResult, values.get("recommendation")),
             cross_check=_model(DuplicateView, values.get("cross_check")),
             approval_request=_model(ApprovalRequest, values.get("approval_request")),
-            approval=_model(ApprovalAction, values.get("approval")),
+            approval=_model(ApprovalDecision, values.get("approval")),
+            approval_failure=_model(ApprovalFailure, values.get("approval_failure")),
             decision=_model(DecisionRecord, values.get("decision")),
             idempotency_key=values.get("idempotency_key"),
             audit=[AuditEvent.model_validate(item) for item in values.get("audit") or []],
@@ -197,13 +211,11 @@ def _status_and_stage(values: dict[str, Any]) -> tuple[CaseRunStatus, str]:
             if isinstance(decision, dict)
             else getattr(decision, "decision", None)
         )
-        mapping: dict[str, CaseRunStatus] = {
-            "approve": "approved",
-            "conditional_approve": "approved",
-            "decline": "declined",
-            "request_documents": "awaiting_documents",
-        }
-        return mapping.get(str(decision_value), "failed"), stage
+        try:
+            outcome = decision_outcome(decision_value)  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001 - an unknown value is a failed run
+            return "failed", stage
+        return outcome.case_status, stage
     if values.get("error"):
         return "failed", stage
     if values.get("approval_request") is not None:
@@ -245,10 +257,8 @@ def gateway_citation(
     *,
     case_id: str,
     evidence: Any,
-) -> Any:
+) -> CitationView:
     """Map rule-engine evidence onto the gateway's citation contract."""
-
-    from ..gateway.models import CitationView
 
     document_id = getattr(evidence, "document_id", None)
     page = getattr(evidence, "page", None)
@@ -268,10 +278,8 @@ def gateway_citation(
     return CitationView(record_path=f"case/{case_id}/evidence")
 
 
-def gateway_flag(*, case_id: str, flag: RuleFlag) -> Any:
+def gateway_flag(*, case_id: str, flag: RuleFlag) -> FlagRecord:
     """Map one rule flag onto the gateway's stored flag contract."""
-
-    from ..gateway.models import FlagRecord
 
     return FlagRecord(
         code=flag.code,
@@ -303,6 +311,8 @@ def gateway_fields(extraction: CaseExtraction, document_id: str) -> list[Extract
 
 __all__ = [
     "ApprovalAction",
+    "ApprovalDecision",
+    "ApprovalFailure",
     "ApprovalRequest",
     "CaseResult",
     "CaseRunStatus",

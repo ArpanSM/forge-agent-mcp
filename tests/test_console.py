@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import jwt
 from fastapi.testclient import TestClient
 
+from forge_agent_mcp.agent.gateway import DecisionCommand
 from forge_agent_mcp.agent.graph import CaseRunner
 from forge_agent_mcp.console.app import create_console_app
 from forge_agent_mcp.console.models import CaseCatalogEntry
@@ -282,7 +285,7 @@ def test_request_documents_path_sets_awaiting_documents(generated_corpus, tmp_pa
     assert fake.read_case(INVOICE_MISSING_DOCUMENT).status == "awaiting_documents"
 
 
-def test_a_completed_case_cannot_be_decided_again(generated_corpus, tmp_path) -> None:
+def test_duplicate_decision_post_returns_the_existing_decision(generated_corpus, tmp_path) -> None:
     client, fake, _service = _console(generated_corpus, tmp_path)
     _run(client, ONBOARDING_CASE)
     first = _decide(client, ONBOARDING_CASE, action="approve", note="Approved once.")
@@ -290,8 +293,8 @@ def test_a_completed_case_cannot_be_decided_again(generated_corpus, tmp_path) ->
 
     second = _decide(client, ONBOARDING_CASE, action="decline", note="A second try.")
 
-    assert second.status_code == 409
-    assert "already" in second.text.lower()
+    assert second.status_code == 200
+    assert "Approved" in second.text
     assert len(fake.decision_calls) == 1
 
 
@@ -305,21 +308,27 @@ def test_console_refuses_a_second_write_if_the_gateway_already_committed(
 
     # Simulate a crash after the gateway commit but before the graph checkpoint.
     fake.create_decision(
-        ONBOARDING_CASE,
-        "approve",
-        pending.recommendation.rationale,
-        [],
-        "simulated-approval-token",
-        "simulated-idempotency-key",
-        "simulated-approval-jwt",
+        DecisionCommand(
+            case_id=ONBOARDING_CASE,
+            decision="approve",
+            rationale=pending.recommendation.rationale,
+            conditions=[],
+            approval_token="simulated-approval-token",
+            idempotency_key="simulated-idempotency-key",
+            approval_jwt="simulated-approval-jwt",
+        )
     )
 
     response = _decide(client, ONBOARDING_CASE, action="approve", note="Retry after a crash.")
 
-    assert response.status_code == 409
-    assert "already" in response.text.lower()
-    assert len(fake.decision_calls) == 1
+    assert response.status_code == 200
     assert "Approved" in response.text
+    assert "Audit chain verified" in response.text
+    assert len(fake.decision_calls) == 1
+    reconciled = service.runner.get(ONBOARDING_CASE)
+    assert reconciled is not None
+    assert reconciled.status == "approved"
+    assert reconciled.audit_verified is True
 
 
 def test_unknown_case_is_not_found(generated_corpus, tmp_path) -> None:
@@ -341,3 +350,101 @@ def test_audit_partial_shows_the_committed_chain(generated_corpus, tmp_path) -> 
     assert response.status_code == 200
     assert "write_committed" in response.text
     assert "create_decision" in response.text
+
+
+def test_hold_recommendation_cannot_be_approved(generated_corpus, tmp_path) -> None:
+    client, fake, service = _console(generated_corpus, tmp_path)
+    _run(client, INVOICE_HIGH)
+    detail = client.get(f"/cases/{INVOICE_HIGH}")
+
+    assert detail.status_code == 200
+    assert "The recommendation is hold" in detail.text
+    assert 'value="approve"' in detail.text
+    assert re.search(r'value="approve"[^>]*disabled', detail.text)
+
+    response = _decide(
+        client,
+        INVOICE_HIGH,
+        action="approve",
+        note="Trying to approve a hold.",
+    )
+
+    assert response.status_code == 409
+    assert "recommendation is hold" in response.text.lower()
+    assert fake.decision_calls == []
+    current = service.runner.get(INVOICE_HIGH)
+    assert current is not None and current.decision is None
+
+
+def test_failed_run_can_be_retried_from_the_console(generated_corpus, tmp_path) -> None:
+    client, fake, service = _console(generated_corpus, tmp_path)
+    fake.fail_next_recommendation("recommendation_unavailable", "Temporary gateway failure.")
+
+    failed = client.post(f"/cases/{ONBOARDING_CASE}/run", follow_redirects=True)
+
+    assert failed.status_code == 502
+    assert "Failed" in failed.text
+    assert "Retry run" in failed.text
+    current = service.runner.get(ONBOARDING_CASE)
+    assert current is not None and current.status == "failed"
+    queue = client.get("/")
+    assert "Failed" in queue.text
+
+    retried = client.post(f"/cases/{ONBOARDING_CASE}/retry", follow_redirects=True)
+
+    assert retried.status_code == 200
+    assert "Pending approval" in retried.text
+    current = service.runner.get(ONBOARDING_CASE)
+    assert current is not None and current.status == "pending_approval"
+
+    approved = _decide(client, ONBOARDING_CASE, action="approve", note="Recovered run.")
+    assert approved.status_code == 200
+    assert "Approved" in approved.text
+    assert len(fake.decision_calls) == 1
+
+
+def test_concurrent_decisions_write_once(generated_corpus, tmp_path) -> None:
+    client, fake, service = _console(generated_corpus, tmp_path)
+    _run(client, ONBOARDING_CASE)
+
+    def submit(note: str):
+        return service.decide(
+            ONBOARDING_CASE,
+            action="approve",
+            approver=APPROVER,
+            note=note,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit, ["first concurrent review", "second concurrent review"]))
+
+    assert all(result.status == "approved" for result in results)
+    assert len(fake.decision_calls) == 1
+    commits = [
+        event
+        for event in fake.get_audit(ONBOARDING_CASE).events
+        if event.event == "write_committed"
+    ]
+    assert len(commits) == 1
+    current = service.runner.get(ONBOARDING_CASE)
+    assert current is not None and current.audit_verified is True
+
+
+def test_expired_approval_returns_to_the_review_form(generated_corpus, tmp_path) -> None:
+    client, fake, _service = _console(generated_corpus, tmp_path)
+    _run(client, ONBOARDING_CASE)
+    fake.fail_next_approval("approval_expired", "The approval token has expired.")
+
+    refused = _decide(client, ONBOARDING_CASE, action="approve", note="Expired attempt.")
+
+    assert refused.status_code == 200
+    assert "Pending approval" in refused.text
+    assert "Approval refused" in refused.text
+    assert "approval expired" in refused.text
+    assert len(fake.decision_calls) == 1
+
+    approved = _decide(client, ONBOARDING_CASE, action="approve", note="Fresh attempt.")
+
+    assert approved.status_code == 200
+    assert "Approved" in approved.text
+    assert len(fake.decision_calls) == 2

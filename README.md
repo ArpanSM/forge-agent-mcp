@@ -24,8 +24,9 @@ make gateway         # requires FORGE_APPROVAL_SECRET; FastMCP HTTP on 127.0.0.1
 make gateway-client  # list tools, read a case, show a scoped 403
 make gateway-demo    # in-process server + client demo
 make write-demo      # approval refusal, commit, replay, conflict and audit chain
-make demo            # gateway + agent + console; two cases wait for the human review
-make demo-auto       # the same two cases completed by a scripted reviewer
+make demo            # gateway + agent + console; completes both demo cases, then serves results
+make console         # gateway + agent + console; two cases wait for the human review
+make demo-auto       # headless: the same two cases completed by a scripted reviewer
 ```
 
 If the system Python is externally managed, pass the flags your environment needs, for
@@ -115,30 +116,37 @@ skips auth; it is not the scoped demo. The startup warning and
 ## Agent and reviewer console
 
 The agent is one LangGraph 1.2.19 graph with a SQLite checkpointer. It runs eight stages:
-intake and classification, extraction with citations, deterministic validation,
-cross-checking (including the gateway duplicate check), summary and recommendation,
+intake and classification, extraction with citations, deterministic validation, the
+tenant-wide duplicate cross-check and evidence reconciliation, summary and recommendation,
 human approval (`interrupt()`), execution through MCP, and audit verification. A pending
 approval survives a process restart; resuming uses `Command(resume=...)` and the same
-thread id, so extraction and recommendation are not re-run.
+thread id, so extraction and recommendation are not re-run. A refused approval returns to
+the approval stage for a fresh token; a committed decision is reconciled without a second
+write.
 
 The reviewer console is FastAPI, Jinja2 and HTMX with no build step. It shows the case
 queue, documents, extracted fields with page and bbox citations, flags grouped by severity,
 the recommendation and conditions, the decision form, and the audit preview. The console
 mints two things only after the reviewer acts: the single-use HMAC approval token bound to
 the case, decision and payload, and a short-lived `freight:approve` bearer token for the
-decision call. The long-lived agent token only carries `freight:read` and `freight:write`.
-Hard stops cannot be approved from the UI or the service; the reviewer must decline.
+decision call. Neither token enters graph state or the `CaseResult`; the runner holds them
+in a transient vault for the execute node. The long-lived agent token only carries
+`freight:read` and `freight:write`. Hard stops cannot be approved from the UI or the
+service; a hold recommendation can only request documents or decline; and a case can have
+exactly one committed decision.
 
 ```bash
-make demo       # gateway + agent + console; two cases wait at the approval interrupt
-make demo-auto  # the same two cases completed by a scripted reviewer
+make demo       # gateway + agent + console; both cases completed, then inspect the results
+make console    # manual review: two cases wait at the approval interrupt
+make demo-auto  # headless completion without the console
 ```
 
-`make demo` prints the console URL and a walkthrough. It does not open a browser. The
-onboarding case recommends approve; the invoice case recommends request documents. The
-decision is written once with a deterministic idempotency key, and the audit chain is
-verified on the way back. See [`docs/agent.md`](docs/agent.md) for the state model, token
-boundary, idempotency and failure paths.
+`make demo` prints the console URL and a walkthrough, completes the onboarding and invoice
+cases, and keeps the console open so the committed decisions and audit chains can be
+inspected. It does not open a browser. `make console` leaves the same two cases pending for
+a human review. The decision is written once with a deterministic idempotency key, and the
+audit chain is verified on the way back. See [`docs/agent.md`](docs/agent.md) for the state
+model, token boundary, idempotency and failure paths.
 
 ## The problem
 
@@ -180,4 +188,5 @@ The spec is the destination. Implementation is tracked in public tickets #2–#9
 
 ## Licence
 
-MIT.
+Project code is MIT (see `LICENSE`). The vendored `htmx.min.js` is htmx 2.0.4 under the
+BSD 0-Clause License; see `src/forge_agent_mcp/console/static/HTMX-LICENSE`.

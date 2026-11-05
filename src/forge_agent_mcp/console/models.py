@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from ..agent.models import CaseResult, ExtractedFieldView
-from ..corpus.vocab import CaseType, Decision, Recommendation
+from ..corpus.vocab import CaseType, Decision, Recommendation, Severity
 from ..gateway.models import AuditEvent, CaseView
 
 QueueStatus = Literal[
@@ -16,6 +16,7 @@ QueueStatus = Literal[
     "awaiting_documents",
     "approved",
     "declined",
+    "failed",
     "unavailable",
 ]
 
@@ -26,6 +27,7 @@ STATUS_LABELS: dict[str, str] = {
     "awaiting_documents": "Awaiting documents",
     "approved": "Approved",
     "declined": "Declined",
+    "failed": "Failed",
     "unavailable": "Unavailable",
 }
 
@@ -56,12 +58,13 @@ class CaseQueueItem:
     case_id: str
     case_type: CaseType
     carrier_name: str
-    status: str
+    status: QueueStatus
     status_label: str
     recommendation: Recommendation | None = None
     decision: Decision | None = None
-    flags: dict[str, int] = field(default_factory=dict)
+    flags: dict[Severity, int] = field(default_factory=dict)
     pending_approval: bool = False
+    decided: bool = False
 
     @property
     def flag_count(self) -> int:

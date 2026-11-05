@@ -12,10 +12,14 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from forge_agent_mcp.agent.gateway import GatewayToolError
+from forge_agent_mcp.agent.gateway import (
+    CaseAlreadyDecidedError,
+    DecisionCommand,
+    GatewayToolError,
+)
 from forge_agent_mcp.corpus.generator import GenerationResult
 from forge_agent_mcp.corpus.manifest import Manifest
-from forge_agent_mcp.corpus.vocab import CaseType, Decision, Recommendation
+from forge_agent_mcp.corpus.vocab import CaseType, Recommendation
 from forge_agent_mcp.gateway.approval import decision_payload_hash
 from forge_agent_mcp.gateway.models import (
     AuditEvent,
@@ -69,6 +73,18 @@ class FakeGateway:
         self.recommendation_calls: list[tuple[str, Recommendation, list[FlagRecord]]] = []
         self.decision_calls: list[dict[str, Any]] = []
         self.duplicate_matches: dict[str, DuplicateView] = {}
+        self.approval_failures: list[tuple[str, str]] = []
+        self.recommendation_failures: list[tuple[str, str]] = []
+
+    def fail_next_approval(self, code: str, message: str) -> None:
+        """Queue one simulated gateway approval refusal."""
+
+        self.approval_failures.append((code, message))
+
+    def fail_next_recommendation(self, code: str, message: str) -> None:
+        """Queue one simulated gateway case-state refusal."""
+
+        self.recommendation_failures.append((code, message))
 
     # -- construction ----------------------------------------------------
 
@@ -244,6 +260,16 @@ class FakeGateway:
         conditions: list[str],
         flags: list[FlagRecord],
     ) -> RecommendationRecord:
+        if self.recommendation_failures:
+            code, message = self.recommendation_failures.pop(0)
+            self._append(
+                case_id,
+                tool="record_recommendation",
+                event="write_denied",
+                outcome="denied",
+                detail={"error_code": code, "message": message},
+            )
+            raise GatewayToolError(code, message)
         record = RecommendationRecord(
             recommendation_id=f"rec_{uuid.uuid4().hex[:12]}",
             case_id=case_id,
@@ -264,41 +290,57 @@ class FakeGateway:
         )
         return record
 
-    def create_decision(
-        self,
-        case_id: str,
-        decision: Decision,
-        rationale: str,
-        conditions: list[str],
-        approval_token: str,
-        idempotency_key: str,
-        approval_jwt: str,
-    ) -> DecisionRecord:
+    def create_decision(self, command: DecisionCommand) -> DecisionRecord:
+        case_id = command.case_id
         self.decision_calls.append(
             {
                 "case_id": case_id,
-                "decision": decision,
-                "rationale": rationale,
-                "conditions": conditions,
-                "approval_token": approval_token,
-                "idempotency_key": idempotency_key,
-                "approval_jwt": approval_jwt,
+                "decision": command.decision,
+                "rationale": command.rationale,
+                "conditions": command.conditions,
+                "approval_token": command.approval_token,
+                "idempotency_key": command.idempotency_key,
+                "approval_jwt": command.approval_jwt,
             }
         )
-        if not approval_token.strip() or not approval_jwt.strip():
+        if self.approval_failures:
+            code, message = self.approval_failures.pop(0)
+            self._append(
+                case_id,
+                tool="create_decision",
+                event="write_denied",
+                outcome="denied",
+                detail={"error_code": code, "message": message},
+            )
+            raise GatewayToolError(code, message)
+        if not command.approval_token.strip() or not command.approval_jwt.strip():
+            self._append(
+                case_id,
+                tool="create_decision",
+                event="write_denied",
+                outcome="denied",
+                detail={"error_code": "approval_required"},
+            )
             raise GatewayToolError(
                 "approval_required", "A console-minted approval token is required."
             )
         payload_hash = decision_payload_hash(
             case_id=case_id,
-            decision=decision,
-            rationale=rationale,
-            conditions=conditions,
+            decision=command.decision,
+            rationale=command.rationale,
+            conditions=command.conditions,
         )
-        existing = self._idempotency.get((case_id, idempotency_key))
+        existing = self._idempotency.get((case_id, command.idempotency_key))
         if existing is not None:
             stored, stored_hash = existing
             if stored_hash != payload_hash:
+                self._append(
+                    case_id,
+                    tool="create_decision",
+                    event="idempotency_conflict",
+                    outcome="denied",
+                    detail={"error_code": "idempotency_conflict"},
+                )
                 raise GatewayToolError(
                     "idempotency_conflict",
                     "This idempotency key was already used with different arguments.",
@@ -311,13 +353,27 @@ class FakeGateway:
             )
             return stored.model_copy(update={"replayed": True})
 
-        outcome = decision_outcome(decision)
+        committed = self._decisions.get(case_id)
+        if committed is not None:
+            self._append(
+                case_id,
+                tool="create_decision",
+                event="write_denied",
+                outcome="denied",
+                detail={
+                    "error_code": "case_already_decided",
+                    "decision_id": committed.decision_id,
+                },
+            )
+            raise CaseAlreadyDecidedError(committed)
+
+        outcome = decision_outcome(command.decision)
         record = DecisionRecord(
             decision_id=f"dec_{uuid.uuid4().hex[:12]}",
             case_id=case_id,
-            decision=decision,
-            rationale=rationale,
-            conditions=conditions,
+            decision=command.decision,
+            rationale=command.rationale,
+            conditions=command.conditions,
             approver=APPROVER,
             principal="agent-underwriter",
             created_at=_now(),
@@ -333,7 +389,7 @@ class FakeGateway:
         self._cases[case_id] = self._cases[case_id].model_copy(
             update={"status": outcome.case_status}
         )
-        self._idempotency[(case_id, idempotency_key)] = (record, payload_hash)
+        self._idempotency[(case_id, command.idempotency_key)] = (record, payload_hash)
         self._append(
             case_id,
             tool="create_decision",
@@ -341,11 +397,11 @@ class FakeGateway:
             outcome="ok",
             detail={
                 "decision_id": record.decision_id,
-                "decision": decision,
+                "decision": command.decision,
                 "crm_stage": outcome.crm_stage,
                 "case_status": outcome.case_status,
                 "approver": APPROVER,
-                "idempotency_key": idempotency_key,
+                "idempotency_key": command.idempotency_key,
                 "payload_hash": payload_hash,
             },
         )

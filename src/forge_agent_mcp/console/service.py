@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 from ..agent.gateway import GatewayClient, GatewayToolError
 from ..agent.graph import CaseRunError, CaseRunner
-from ..agent.models import (
-    ApprovalAction,
-    CaseResult,
-)
+from ..agent.models import ApprovalAction, CaseResult
 from ..corpus.manifest import Manifest
 from ..corpus.models import CorpusIndex
-from ..corpus.vocab import Decision, Recommendation
+from ..corpus.vocab import Decision, Recommendation, Severity
 from ..gateway.approval import ApprovalTokenIssuer
 from ..gateway.auth import APPROVE_SCOPE, READ_SCOPE, LocalTokenIssuer
-from ..gateway.models import AuditEvent, CaseView, FlagRecord
+from ..gateway.models import CaseView, FlagRecord
+from ..gateway.store import decision_outcome
 from .models import (
     DECISION_LABELS,
     DECISION_STATUS_LABELS,
@@ -23,20 +22,9 @@ from .models import (
     CaseCatalogEntry,
     CaseDetail,
     CaseQueueItem,
+    QueueStatus,
 )
 
-HARD_STOP_CODES = frozenset(
-    {
-        "watchlist_hit",
-        "authority_inactive",
-        "identity_mismatch",
-        "insurance_expired",
-        "insurance_below_minimum",
-        "duplicate_invoice",
-    }
-)
-UNTRUSTED_CODES = frozenset({"document_instruction_injection"})
-MISSING_DOCUMENT_CODES = frozenset({"missing_document"})
 ALL_ACTIONS: list[Decision] = [
     "approve",
     "conditional_approve",
@@ -75,35 +63,70 @@ def decision_status_label(value: Decision | None) -> str:
     return DECISION_STATUS_LABELS[value]
 
 
-def blocked_reason(flags: Sequence[FlagRecord] | Sequence[object]) -> str | None:
+def decision_status(value: Decision) -> QueueStatus:
+    return cast(QueueStatus, decision_outcome(value).case_status)
+
+
+def _has_hard_stop(flags: Sequence[FlagRecord] | Sequence[object]) -> bool:
+    return any(getattr(flag, "severity", None) == "hard_stop" for flag in flags)
+
+
+def allowed_actions(
+    result: CaseResult | None,
+    flags: Sequence[FlagRecord] | Sequence[object],
+) -> list[Decision]:
+    """Derive the review actions from severity and the recommendation."""
+
+    if _has_hard_stop(flags):
+        return list(HARD_STOP_ACTIONS)
     codes = {getattr(flag, "code", "") for flag in flags}
-    if codes & HARD_STOP_CODES:
+    if "document_instruction_injection" in codes or "missing_document" in codes:
+        return list(HOLD_ACTIONS)
+    recommendation = result.recommendation if result is not None else None
+    if recommendation is None:
+        return list(HOLD_ACTIONS)
+    value = recommendation.recommendation
+    if value in {"decline", "escalate"}:
+        return list(HARD_STOP_ACTIONS)
+    if value in {"hold", "request_documents"}:
+        return list(HOLD_ACTIONS)
+    if value == "conditional_approve":
+        return ["conditional_approve", "decline", "request_documents"]
+    if value == "approve":
+        return list(ALL_ACTIONS)
+    return list(HOLD_ACTIONS)
+
+
+def blocked_reason(
+    result: CaseResult | None,
+    flags: Sequence[FlagRecord] | Sequence[object],
+) -> str | None:
+    if _has_hard_stop(flags):
         return (
             "A hard-stop flag blocks approval and document requests. Decline the case; "
             "a hard stop can never be approved."
         )
-    if codes & UNTRUSTED_CODES:
+    codes = {getattr(flag, "code", "") for flag in flags}
+    if "document_instruction_injection" in codes:
         return (
             "Document-embedded instructions were found and quarantined. Approval is "
             "blocked; request documents or decline after a manual review."
         )
-    if codes & MISSING_DOCUMENT_CODES:
+    if "missing_document" in codes:
         return (
             "Required packet documents are missing. Request documents or decline; "
             "funding cannot be approved from an incomplete packet."
         )
+    if (
+        result is not None
+        and result.recommendation is not None
+        and result.recommendation.recommendation == "hold"
+    ):
+        return (
+            "The recommendation is hold. Only request documents or decline are "
+            "available; approve is not offered."
+        )
     return None
-
-
-def allowed_actions(flags: Sequence[FlagRecord] | Sequence[object]) -> list[Decision]:
-    """Return the decisions the console will accept for this evidence."""
-
-    codes = {getattr(flag, "code", "") for flag in flags}
-    if codes & HARD_STOP_CODES:
-        return list(HARD_STOP_ACTIONS)
-    if codes & (UNTRUSTED_CODES | MISSING_DOCUMENT_CODES):
-        return list(HOLD_ACTIONS)
-    return list(ALL_ACTIONS)
 
 
 class ConsoleService:
@@ -150,9 +173,14 @@ class ConsoleService:
                 continue
             status = self._status(view, result)
             flags = result.flags if result is not None else view.flags
-            counts = {"hard_stop": 0, "high": 0, "medium": 0, "low": 0}
+            counts: dict[Severity, int] = {"hard_stop": 0, "high": 0, "medium": 0, "low": 0}
             for flag in flags:
                 counts[flag.severity] = counts.get(flag.severity, 0) + 1
+            decision = (
+                result.decision.decision
+                if result is not None and result.decision is not None
+                else (view.decision.decision if view.decision is not None else None)
+            )
             items.append(
                 CaseQueueItem(
                     case_id=entry.case_id,
@@ -169,40 +197,29 @@ class ConsoleService:
                             else None
                         )
                     ),
-                    decision=(
-                        result.decision.decision
-                        if result and result.decision
-                        else (view.decision.decision if view.decision else None)
-                    ),
+                    decision=decision,
                     flags=counts,
                     pending_approval=(
                         result is not None
                         and result.status == "pending_approval"
                         and view.decision is None
                     ),
+                    decided=decision is not None,
                 )
             )
         return items
 
-    def _status(self, view: CaseView, result: CaseResult | None) -> str:
+    def _status(self, view: CaseView, result: CaseResult | None) -> QueueStatus:
         if view.decision is not None:
-            return {
-                "approve": "approved",
-                "conditional_approve": "approved",
-                "decline": "declined",
-                "request_documents": "awaiting_documents",
-            }[view.decision.decision]
+            return decision_status(view.decision.decision)
         if result is not None:
+            if result.status == "failed":
+                return "failed"
             if result.status == "pending_approval":
                 return "pending_approval"
             if result.decision is not None:
-                return {
-                    "approve": "approved",
-                    "conditional_approve": "approved",
-                    "decline": "declined",
-                    "request_documents": "awaiting_documents",
-                }[result.decision.decision]
-        return view.status
+                return decision_status(result.decision.decision)
+        return cast(QueueStatus, view.status)
 
     def detail(self, case_id: str) -> CaseDetail:
         try:
@@ -216,26 +233,40 @@ class ConsoleService:
                 ) from exc
             raise ConsoleError(exc.code, exc.message, status_code=502) from exc
         result = self.runner.get(case_id)
+        if (
+            view.decision is not None
+            and result is not None
+            and (result.decision is None or not result.audit_verified)
+        ):
+            result = self.runner.reconcile(case_id, view) or result
         try:
             audit = self.gateway.get_audit(case_id, limit=200).events
         except GatewayToolError:
             audit = list(result.audit) if result is not None else []
         flags = result.flags if result is not None else view.flags
-        blocker = blocked_reason(flags)
         return CaseDetail(
             view=view,
             result=result,
             audit=list(audit),
             fields=result.fields() if result is not None else [],
-            allowed_actions=allowed_actions(flags),
-            blocker=blocker,
+            allowed_actions=allowed_actions(result, flags),
+            blocker=blocked_reason(result, flags),
         )
 
-    def audit(self, case_id: str) -> list[AuditEvent]:
-        detail = self.detail(case_id)
-        return detail.audit
-
     # -- actions ---------------------------------------------------------
+
+    def _reconciled(self, case_id: str, view: CaseView) -> CaseResult | None:
+        if view.decision is None:
+            return None
+        return self.runner.reconcile(case_id, view)
+
+    def _reject_existing_decision(self, case_id: str, view: CaseView) -> None:
+        if view.decision is not None:
+            raise ConsoleError(
+                "case_already_decided",
+                f"Case {case_id!r} already has decision {view.decision.decision_id}.",
+                status_code=409,
+            )
 
     def run(self, case_id: str) -> CaseResult:
         try:
@@ -246,19 +277,13 @@ class ConsoleService:
                 f"Case {case_id!r} was not found.",
                 status_code=404,
             ) from exc
-        if view.decision is not None:
-            raise ConsoleError(
-                "case_already_decided",
-                f"Case {case_id!r} already has a decision and cannot be run again.",
-                status_code=409,
-            )
+        reconciled = self._reconciled(case_id, view)
+        if reconciled is not None:
+            return reconciled
+        self._reject_existing_decision(case_id, view)
         existing = self.runner.get(case_id)
         if existing is not None and existing.decision is not None:
-            raise ConsoleError(
-                "case_already_decided",
-                f"Case {case_id!r} already has a decision and cannot be run again.",
-                status_code=409,
-            )
+            return existing
         if existing is not None and existing.status in {"pending_approval", "in_progress"}:
             return existing
         result = self.runner.start(case_id)
@@ -266,6 +291,38 @@ class ConsoleService:
             raise ConsoleError(
                 "case_run_failed",
                 result.error or f"Case {case_id!r} could not be run.",
+                status_code=502,
+            )
+        return result
+
+    def retry(self, case_id: str) -> CaseResult:
+        try:
+            view = self.gateway.read_case(case_id)
+        except GatewayToolError as exc:
+            raise ConsoleError(
+                "case_not_found",
+                f"Case {case_id!r} was not found.",
+                status_code=404,
+            ) from exc
+        reconciled = self._reconciled(case_id, view)
+        if reconciled is not None:
+            return reconciled
+        self._reject_existing_decision(case_id, view)
+        current = self.runner.get(case_id)
+        if current is None:
+            raise ConsoleError(
+                "case_not_started",
+                f"Case {case_id!r} has not been run.",
+                status_code=409,
+            )
+        if current.status != "failed":
+            return current
+        self.runner.reset(case_id)
+        result = self.runner.start(case_id)
+        if result.status == "failed":
+            raise ConsoleError(
+                "case_run_failed",
+                result.error or f"Case {case_id!r} could not be retried.",
                 status_code=502,
             )
         return result
@@ -300,10 +357,20 @@ class ConsoleService:
                 f"Case {case_id!r} has not been run. Start it before deciding.",
                 status_code=409,
             )
+        try:
+            live = self.gateway.read_case(case_id)
+        except GatewayToolError as exc:
+            raise ConsoleError(exc.code, exc.message, status_code=502) from exc
+        reconciled = self._reconciled(case_id, live)
+        if reconciled is not None:
+            return reconciled
+        self._reject_existing_decision(case_id, live)
         if current.decision is not None:
+            return current
+        if current.status == "failed":
             raise ConsoleError(
-                "case_already_decided",
-                f"Case {case_id!r} already has a decision; it cannot be decided again.",
+                "case_failed",
+                "The case run failed. Retry the run before deciding.",
                 status_code=409,
             )
         if current.status != "pending_approval":
@@ -312,22 +379,12 @@ class ConsoleService:
                 f"Case {case_id!r} is not waiting for a human decision.",
                 status_code=409,
             )
-        try:
-            live = self.gateway.read_case(case_id)
-        except GatewayToolError as exc:
-            raise ConsoleError(exc.code, exc.message, status_code=502) from exc
-        if live.decision is not None:
-            raise ConsoleError(
-                "case_already_decided",
-                f"Case {case_id!r} already has a committed decision; it cannot be written again.",
-                status_code=409,
-            )
-        blocker = blocked_reason(current.flags)
-        allowed = allowed_actions(current.flags)
+        allowed = allowed_actions(current, current.flags)
         if decision not in allowed:
             raise ConsoleError(
                 "decision_blocked",
-                blocker or f"The {decision} action is not available for this case.",
+                blocked_reason(current, current.flags)
+                or f"The {decision} action is not available for this recommendation.",
                 status_code=409,
             )
 
@@ -440,6 +497,7 @@ __all__ = [
     "blocked_reason",
     "catalog_from_corpus",
     "decision_label",
+    "decision_status",
     "decision_status_label",
     "recommendation_label",
 ]

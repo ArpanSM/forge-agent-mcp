@@ -176,6 +176,19 @@ def create_console_app(service: ConsoleService) -> FastAPI:
             )
         return RedirectResponse(url=f"/cases/{case_id}", status_code=303)
 
+    @app.post("/cases/{case_id}/retry")
+    def retry_case(request: Request, case_id: str) -> Any:
+        try:
+            service.retry(case_id)
+        except ConsoleError as exc:
+            return _detail_or_error(
+                request,
+                case_id,
+                error=exc.message,
+                status_code=exc.status_code,
+            )
+        return RedirectResponse(url=f"/cases/{case_id}", status_code=303)
+
     @app.post("/cases/{case_id}/decision")
     def decide_case(
         request: Request,

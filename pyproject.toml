@@ -39,9 +39,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 forge_agent_mcp = [
     "console/templates/*.html",
-    "console/static/*.css",
-    "console/static/*.js",
-    "console/static/*.md",
+    "console/static/*",
 ]
 
 [tool.pytest.ini_options]

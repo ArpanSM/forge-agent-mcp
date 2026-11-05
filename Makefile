@@ -48,11 +48,11 @@ write-demo:
 
 console:
 	@test -f data/corpus/corpus.json || $(MAKE) corpus
-	$(PYTHON) -m forge_agent_mcp.console demo
+	$(PYTHON) -m forge_agent_mcp.console demo --serve
 
 demo:
 	@test -f data/corpus/corpus.json || $(MAKE) corpus
-	$(PYTHON) -m forge_agent_mcp.console demo
+	$(PYTHON) -m forge_agent_mcp.console demo --auto --serve
 
 demo-auto:
 	@test -f data/corpus/corpus.json || $(MAKE) corpus

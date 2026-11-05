@@ -14,8 +14,9 @@ from typing import Any, Protocol
 
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from pydantic import Field
 
-from ..corpus.vocab import Decision, Recommendation
+from ..corpus.vocab import Decision, Recommendation, StrictModel
 from ..gateway.models import (
     AuditView,
     CaseView,
@@ -33,10 +34,35 @@ from ..gateway.models import (
 class GatewayToolError(Exception):
     """A business refusal returned by a gateway tool."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, data: Any | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.data = data
+
+
+class CaseAlreadyDecidedError(GatewayToolError):
+    """The case already has a committed decision; carry it back for reconciliation."""
+
+    def __init__(self, decision: DecisionRecord) -> None:
+        super().__init__(
+            "case_already_decided",
+            f"Case {decision.case_id!r} already has decision {decision.decision_id}.",
+            data=decision,
+        )
+        self.decision = decision
+
+
+class DecisionCommand(StrictModel):
+    """One transient create_decision call, including the short-lived tokens."""
+
+    case_id: str = Field(min_length=1)
+    decision: Decision
+    rationale: str = Field(min_length=1)
+    conditions: list[str] = Field(default_factory=list)
+    approval_token: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+    approval_jwt: str = Field(min_length=1)
 
 
 class GatewayClient(Protocol):
@@ -71,16 +97,7 @@ class GatewayClient(Protocol):
         flags: list[FlagRecord],
     ) -> RecommendationRecord: ...
 
-    def create_decision(
-        self,
-        case_id: str,
-        decision: Decision,
-        rationale: str,
-        conditions: list[str],
-        approval_token: str,
-        idempotency_key: str,
-        approval_jwt: str,
-    ) -> DecisionRecord: ...
+    def create_decision(self, command: DecisionCommand) -> DecisionRecord: ...
 
     def get_audit(self, case_id: str, limit: int = 200) -> AuditView: ...
 
@@ -111,9 +128,12 @@ class FastMCPGatewayClient:
             result = await client.call_tool_mcp(name, arguments)
         if result.is_error:
             content = result.structured_content or {}
-            code = content.get("error_code") or "tool_error"
-            message = content.get("message") or _text_content(result) or "Gateway tool failed."
-            raise GatewayToolError(str(code), str(message))
+            code = str(content.get("error_code") or "tool_error")
+            message = str(content.get("message") or _text_content(result) or "Gateway tool failed.")
+            data = content.get("data")
+            if code == "case_already_decided" and isinstance(data, dict):
+                raise CaseAlreadyDecidedError(DecisionRecord.model_validate(data))
+            raise GatewayToolError(code, message, data=data)
         content = result.structured_content
         if not isinstance(content, dict) or content.get("ok") is not True:
             raise GatewayToolError(
@@ -188,28 +208,19 @@ class FastMCPGatewayClient:
             )
         )
 
-    def create_decision(
-        self,
-        case_id: str,
-        decision: Decision,
-        rationale: str,
-        conditions: list[str],
-        approval_token: str,
-        idempotency_key: str,
-        approval_jwt: str,
-    ) -> DecisionRecord:
+    def create_decision(self, command: DecisionCommand) -> DecisionRecord:
         return DecisionRecord.model_validate(
             self._call(
                 "create_decision",
                 {
-                    "case_id": case_id,
-                    "decision": decision,
-                    "rationale": rationale,
-                    "conditions": conditions,
-                    "approval_token": approval_token,
-                    "idempotency_key": idempotency_key,
+                    "case_id": command.case_id,
+                    "decision": command.decision,
+                    "rationale": command.rationale,
+                    "conditions": command.conditions,
+                    "approval_token": command.approval_token,
+                    "idempotency_key": command.idempotency_key,
                 },
-                token=approval_jwt,
+                token=command.approval_jwt,
             )
         )
 
@@ -229,4 +240,10 @@ def _text_content(result: Any) -> str:
     return " ".join(parts)
 
 
-__all__ = ["FastMCPGatewayClient", "GatewayClient", "GatewayToolError"]
+__all__ = [
+    "CaseAlreadyDecidedError",
+    "DecisionCommand",
+    "FastMCPGatewayClient",
+    "GatewayClient",
+    "GatewayToolError",
+]

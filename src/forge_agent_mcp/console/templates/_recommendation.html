@@ -65,10 +65,14 @@
       <p class="rec-rationale">Run the case to classify the packet, extract cited fields, apply the deterministic validators and produce a recommendation for review.</p>
       {% if detail.result and detail.result.status == 'failed' %}
       <div class="error-banner"><strong>Run failed</strong>{{ detail.result.error }}</div>
-      {% endif %}
+      <form method="post" action="/cases/{{ detail.view.case_id }}/retry">
+        <button class="btn primary" type="submit" style="width:100%;padding:8px">Retry run</button>
+      </form>
+      {% else %}
       <form method="post" action="/cases/{{ detail.view.case_id }}/run">
         <button class="btn primary" type="submit" style="width:100%;padding:8px">Run case</button>
       </form>
+      {% endif %}
     </div>
   </div>
 {% endif %}

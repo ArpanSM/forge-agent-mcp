@@ -12,6 +12,14 @@
       <span class="pill pending">{{ detail.allowed_actions | length }} actions</span>
     </div>
     <div class="decision-body">
+      {% if detail.result.approval_failure %}
+      <div class="error-banner">
+        <strong>Approval refused</strong>
+        {{ detail.result.approval_failure.code | replace('_', ' ') }}:
+        {{ detail.result.approval_failure.message }} Your previous approval attempt was not
+        written. Review the evidence and submit a fresh approval.
+      </div>
+      {% endif %}
       {% if detail.blocker %}
       <div class="scope-banner">
         <svg class="icon"><use href="#i-alert"></use></svg>
@@ -97,12 +105,15 @@
     <div class="decision-body">
       {% if detail.result and detail.result.status == 'failed' %}
       <div class="error-banner"><strong>Run failed</strong>{{ detail.result.error }}</div>
+      <form method="post" action="/cases/{{ detail.view.case_id }}/retry">
+        <button class="btn primary" type="submit" style="width:100%;padding:8px">Retry run</button>
+      </form>
       {% else %}
       <p class="empty">Start the case first. The agent will stop before any decision write and show the pending approval here.</p>
-      {% endif %}
       <form method="post" action="/cases/{{ detail.view.case_id }}/run">
         <button class="btn primary" type="submit" style="width:100%;padding:8px">Run case</button>
       </form>
+      {% endif %}
     </div>
   </div>
 {% endif %}

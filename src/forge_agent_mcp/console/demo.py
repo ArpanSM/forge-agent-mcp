@@ -22,7 +22,7 @@ from ..agent.graph import CaseRunner
 from ..agent.models import CaseResult
 from ..config import Settings
 from ..corpus.generator import generate_corpus
-from ..corpus.manifest import load_manifest
+from ..corpus.manifest import Manifest, load_manifest
 from ..corpus.models import CorpusIndex
 from ..gateway.approval import ApprovalTokenIssuer
 from ..gateway.auth import READ_SCOPE, WRITE_SCOPE, LocalTokenIssuer
@@ -31,10 +31,6 @@ from ..gateway.store import GatewayStore
 from .app import create_console_app
 from .service import ConsoleService, catalog_from_corpus
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MANIFEST = PROJECT_ROOT / "corpus" / "manifest.json"
-DEFAULT_CORPUS_DIR = PROJECT_ROOT / "data" / "corpus"
-DEFAULT_DEMO_DIR = PROJECT_ROOT / "data" / "console-demo"
 DEMO_CASES = ("case_onb_ridgeline", "case_inv_northgate")
 DEFAULT_APPROVER = "underwriter@example.test"
 
@@ -67,7 +63,7 @@ def _choose_port(host: str, preferred: int) -> int:
         return int(probe.getsockname()[1])
 
 
-def _ensure_corpus(manifest: Any, corpus_dir: Path) -> CorpusIndex:
+def _ensure_corpus(manifest: Manifest, corpus_dir: Path) -> CorpusIndex:
     index_path = corpus_dir / "corpus.json"
     if not index_path.is_file():
         generate_corpus(manifest, corpus_dir)
@@ -113,6 +109,16 @@ def _print_walkthrough(console_url: str, gateway_url: str) -> None:
     )
 
 
+def _print_completed_walkthrough(console_url: str, gateway_url: str) -> None:
+    print(f"\nForge reviewer console: {console_url}")
+    print(f"Gateway (MCP):         {gateway_url}")
+    print(
+        "\nBoth demo cases are already completed. Open the console to inspect the\n"
+        "decision, cited evidence and audit chain, or run another case from the queue.\n"
+        "Press Ctrl+C here when you are done.\n"
+    )
+
+
 def _print_completed(results: list[CaseResult]) -> None:
     print("\nCompleted decisions:")
     for result in results:
@@ -126,9 +132,9 @@ def _print_completed(results: list[CaseResult]) -> None:
 
 def run_demo(args: argparse.Namespace) -> int:
     settings = Settings()
-    manifest = load_manifest(Path(args.manifest) if args.manifest else DEFAULT_MANIFEST)
-    corpus_dir = Path(args.corpus_dir) if args.corpus_dir else DEFAULT_CORPUS_DIR
-    demo_dir = Path(args.demo_dir) if args.demo_dir else DEFAULT_DEMO_DIR
+    manifest = load_manifest(Path(args.manifest))
+    corpus_dir = Path(args.corpus_dir)
+    demo_dir = Path(args.demo_dir)
     demo_dir.mkdir(parents=True, exist_ok=True)
     index = _ensure_corpus(manifest, corpus_dir)
 
@@ -221,7 +227,7 @@ def run_demo(args: argparse.Namespace) -> int:
             _print_completed(completed)
             if not args.serve:
                 return 0
-            _print_walkthrough(console_url, gateway_url)
+            _print_completed_walkthrough(console_url, gateway_url)
         else:
             _print_pending(started)
             _print_walkthrough(console_url, gateway_url)
@@ -250,9 +256,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     demo = subparsers.add_parser("demo", help="start the gateway, agent and console")
-    demo.add_argument("--manifest")
-    demo.add_argument("--corpus-dir")
-    demo.add_argument("--demo-dir")
+    demo.add_argument("--manifest", default="corpus/manifest.json")
+    demo.add_argument("--corpus-dir", default="data/corpus")
+    demo.add_argument("--demo-dir", default="data/console-demo")
     demo.add_argument("--gateway-host")
     demo.add_argument("--gateway-port", type=int)
     demo.add_argument("--console-host")
@@ -271,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     demo.add_argument(
         "--serve",
         action="store_true",
-        help="keep the console open after a headless auto run",
+        help="serve the reviewer console instead of exiting after the run",
     )
     args = parser.parse_args(argv)
     if args.command == "demo":

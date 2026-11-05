@@ -42,6 +42,7 @@
               {% elif item.status == 'declined' %}{% set tone = 'tone-hard' %}
               {% elif item.status == 'awaiting_documents' %}{% set tone = 'tone-high' %}
               {% elif item.status == 'extracting' %}{% set tone = 'tone-medium' %}
+              {% elif item.status == 'failed' %}{% set tone = 'tone-hard' %}
               {% endif %}
               <tr>
                 <td>
@@ -51,6 +52,7 @@
                 <td><span class="queue-kind">{{ item.case_type | capitalize }}</span></td>
                 <td>
                   <span class="status-pill {{ tone }}"><i></i>{{ item.status_label }}</span>
+                  {% if item.decided %}<span class="pill ok">Decided</span>{% endif %}
                   {% if item.recommendation %}
                   <div class="queue-id">Rec: {{ item.recommendation | recommendation_label }}</div>
                   {% endif %}
@@ -74,7 +76,11 @@
                     <span class="faint small">Not seeded</span>
                     {% else %}
                     <a class="btn small" href="/cases/{{ item.case_id }}">Open</a>
-                    {% if item.pending_approval %}
+                    {% if item.status == 'failed' %}
+                    <form method="post" action="/cases/{{ item.case_id }}/retry" style="margin:0">
+                      <button class="btn small primary" type="submit">Retry</button>
+                    </form>
+                    {% elif item.pending_approval %}
                     <a class="btn small primary" href="/cases/{{ item.case_id }}#decision">Review</a>
                     {% elif not item.decision %}
                     <form method="post" action="/cases/{{ item.case_id }}/run" style="margin:0">

@@ -10,6 +10,7 @@
 {% elif decision == 'approve' or decision == 'conditional_approve' %}{% set status_text = 'Approved' %}{% set status_tone = 'tone-ok' %}
 {% elif decision == 'decline' %}{% set status_text = 'Declined' %}{% set status_tone = 'tone-hard' %}
 {% elif decision == 'request_documents' %}{% set status_text = 'Awaiting documents' %}{% set status_tone = 'tone-high' %}
+{% elif result and result.status == 'failed' %}{% set status_text = 'Failed' %}{% set status_tone = 'tone-hard' %}
 {% elif detail.view.status == 'extracting' %}{% set status_text = 'In progress' %}{% set status_tone = 'tone-medium' %}
 {% endif %}
 
