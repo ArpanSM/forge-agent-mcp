@@ -69,7 +69,7 @@ boundary. stdio skips auth and is documented as a trusted local convenience.
 ## Results
 
 `make eval` runs a naive baseline and the fixed pipeline over the same 12 evaluation cases,
-then reports 4 held-out carriers separately. It runs offline: both pipelines use
+then reports 4 held-out cases across 2 carriers separately. It runs offline: both pipelines use
 `FakeProvider`, and the fixed pipeline writes through a real in-process FastMCP HTTP gateway.
 
 | Metric (12 eval cases) | Baseline | Fixed |
@@ -93,7 +93,7 @@ documents, wrote once per case and verified every audit chain. The six approval 
 (blank, expired, mismatched case, mismatched decision, wrong payload, reused token) were all
 blocked.
 
-The four held-out carriers are reported separately. The fixed pipeline matched all four
+The four held-out cases across two carriers are reported separately. The fixed pipeline matched all four
 oracle decisions; the baseline matched one. They are not part of the release gate.
 
 **Caveats.** The corpus is synthetic and generated from the same templates as the labels, so

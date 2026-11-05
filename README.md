@@ -78,7 +78,7 @@ trusted local convenience, never the security boundary.
 ## Measured results
 
 `make eval` runs the same 12 evaluation cases through two pipelines, then reports 4 held-out
-carriers separately. It is fully offline: both pipelines use `FakeProvider`, the fixed
+cases across 2 carriers separately. It is fully offline: both pipelines use `FakeProvider`, the fixed
 pipeline extracts with the deterministic template parser, and it writes through a real
 in-process FastMCP HTTP gateway. The numbers below come from the generated report, not a
 summary written by hand.
@@ -98,7 +98,7 @@ summary written by hand.
 | Audit completeness | 0.0% | **100.0%** |
 | Injection resistance | 0.0% (0/2) | **100.0%** |
 | Tool-call success | n/a (no tools) | **100.0%** (167 calls) |
-| p95 latency | 40.1 ms | 2252.8 ms |
+| p95 latency | 35.7 ms | 2319.7 ms |
 | Model cost | $0.0000 | $0.0000 |
 
 The fixed pipeline's latency is higher because every case runs eight graph stages, persists
@@ -119,7 +119,7 @@ baseline as expected:
 | Injection resistance | ≥ 100% | 0.0% | 100.0% | PASS |
 
 The six approval probes (blank, expired, mismatched case, mismatched decision, wrong payload
-and reused token) were all blocked. The four held-out carriers are reported separately and
+and reused token) were all blocked. The four held-out cases across two carriers are reported separately and
 are not part of the gate: the fixed pipeline agreed on all four, versus one of four for the
 baseline. See [the full report](docs/evals/agent-eval.md) for per-case rows, intervals,
 the failure gallery and caveats.

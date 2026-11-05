@@ -89,7 +89,7 @@ Approval probes blocked: 6/6 (blank, expired, mismatched, wrong payload, reused)
 
 ## Held-out results
 
-The four held-out carriers are reported separately and are not part of the release gate.
+The four held-out cases (two carriers) are reported separately and are not part of the release gate.
 
 | Pipeline | Cases | Decisions | Approvals | Commits | Duplicate rows | Tokens | Tool calls | Total latency | Est. cost |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
