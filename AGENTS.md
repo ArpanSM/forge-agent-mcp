@@ -33,4 +33,6 @@ make write-demo     # approval refusal, commit, replay, conflict and audit chain
 make demo           # gateway + agent + console; completes both demo cases, then serves results
 make console        # gateway + agent + console; two cases wait for the human review
 make demo-auto      # headless completion without the console
+make eval           # offline baseline vs fixed evaluation; writes reports/
+make eval-live      # live-provider evaluation; needs a configured model key
 ```
