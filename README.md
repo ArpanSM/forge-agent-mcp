@@ -1,229 +1,272 @@
 # Forge Agent + MCP
 
-A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
+A freight underwriting agent and an MCP business-tool gateway, built as a synthetic,
+local proof of a document workflow that stops for a human before it changes anything.
 
-**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, the MCP gateway with auth, tenant isolation, audit and the approval-token/idempotent decision write, the LangGraph agent plus reviewer console, and the offline evaluation harness with baseline, metrics, hard gates and reports.
+**Status:** built, evaluated offline, and demonstrated locally. This is a portfolio proof,
+not a production service.
 
-- [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
-- [Gateway guide](docs/gateway.md)
-- [Domain glossary](CONTEXT.md)
-- [Agent guide](AGENTS.md)
-- [Architecture decisions](docs/adr/)
-
-## Repository commands
-
-```bash
-make install         # editable install with dev dependencies
-make corpus          # regenerate the synthetic corpus into data/corpus/
-make test            # offline pytest suite; live tests are marked and deselected
-make test-live       # opt-in live model tests (sets FORGE_LIVE_MODEL=1)
-make lint            # ruff
-make extract CASE=case_onb_ridgeline   # classify documents and print cited fields
-make review CASE=case_inv_northgate    # flags, severity, recommendation and evidence
-make gateway         # requires FORGE_APPROVAL_SECRET; FastMCP HTTP on 127.0.0.1:8765/mcp
-make gateway-client  # list tools, read a case, show a scoped 403
-make gateway-demo    # in-process server + client demo
-make write-demo      # approval refusal, commit, replay, conflict and audit chain
-make demo            # gateway + agent + console; completes both demo cases, then serves results
-make console         # gateway + agent + console; two cases wait for the human review
-make demo-auto       # headless: the same two cases completed by a scripted reviewer
-make eval            # offline baseline vs fixed on 12 eval + 4 held-out cases
-make eval-live       # optional live-provider eval; needs a configured model key
-```
-
-If the system Python is externally managed, pass the flags your environment needs, for
-example `make install PIP_FLAGS="--user --break-system-packages"`.
-
-## Gateway auth
-
-Streamable HTTP is the security boundary: it verifies the local HS256 issuer, the exact
-audience, the global `freight:read` scope, each tool's write/approve scope and the tenant
-claim. Invalid or expired tokens get `401`; a scoped shortfall gets `403
-insufficient_scope` with `WWW-Authenticate`.
-
-**stdio skips auth and scopes.** It is a trusted local transport for a local client, not
-the scoped demo and not an authorization boundary. The server prints a startup warning
-when it runs over stdio; use HTTP to demonstrate scopes, tenant isolation and the 403
-challenge.
-
-The corpus manifest at [`corpus/manifest.json`](corpus/manifest.json) is the source of
-truth for the 8 carriers, 16 cases, document types, archetypes and the 12 + 4 eval/held-out
-split. Generated PDFs and ground truth are written to `data/corpus/` and are gitignored.
-
-## Extraction with citations
-
-`make extract` classifies every document in a case from its page text and extracts the
-fields the rule engine needs. Each value carries a citation with the document id, page,
-bbox and the verbatim source quote; a citation is accepted only if the quote is on that
-page and the bbox covers it.
-
-The default `MODEL_PROVIDER=fake` selects `FakeProvider`; because it has no document
-knowledge, classification and extraction fall back to the deterministic template parser,
-so the command runs offline. Set `MODEL_PROVIDER=orcarouter` and `ORCAROUTER_API_KEY`, or
-`MODEL_PROVIDER=lfm3`, to use a live provider. Classification and extraction both go
-through the provider abstraction, with the keyword and template parsers as validated
-fallbacks.
-
-A schema or citation failure is retried once. If the provider still fails, extraction
-tries the deterministic parser for a known template; only if that also fails is the
-document reported as `needs_more_info`. Every accepted value keeps a verified citation,
-so extraction never invents a value. Reports are written to
-`data/extractions/<case>.json` for the later rule engine and gateway. The live model test
-is marked `live`, excluded from `make test`, and additionally requires
-`FORGE_LIVE_MODEL=1`; `make test-live` sets that flag.
-
-## Deterministic rule engine
-
-`make review` extracts a case with the offline deterministic parser, loads the typed
-structured records (watchlist, prior invoices, UCC and broker bond), runs every validator
-and prints the flags with their rule id and citation. The engine is pure Python and never
-calls a model or the network.
-
-Hard stops (watchlist hit, identity mismatch, inactive authority, expired or underinsured
-policy, duplicate invoice) always decline or escalate. Two or more high flags hold the
-case; one high flag is a conditional approval. Missing required documents always request
-documents, even when another high flag is present. An invoice whose total or line items
-cannot be parsed is flagged high and held as unverifiable. Medium flags add conditions;
-low flags approve with clarification.
-
-Text aimed at an AI agent is flagged as `document_instruction_injection`, quoted nowhere,
-ignored, and held for manual review. The injection cannot change the risk facts or
-override a hard stop. Demo thresholds live in
-[`src/forge_agent_mcp/rules/policy.py`](src/forge_agent_mcp/rules/policy.py) and mirror
-the gateway policy pack. The corpus also catalogues `altered_metadata` and
-`formatting_inconsistency`; both are deferred to a later slice and are not emitted here.
-
-## MCP gateway
-
-`make gateway` starts the FastMCP server over Streamable HTTP at
-`http://127.0.0.1:8765/mcp`. It exposes eight typed tools with `freight:read`,
-`freight:write` and `freight:approve` scopes, a local HS256 issuer, a tenant check and an
-append-only audit log. `make gateway-client` lists the tools, reads a case and shows a
-scoped 403.
-
-`create_decision` also requires a console-minted HMAC approval token bound to the tenant,
-case, decision, payload and expiry, with a single-use `jti`. The gateway refuses to start
-without `FORGE_APPROVAL_SECRET`; the agent never holds that key. The decision, CRM stage,
-approval use, idempotency row and audit event commit in one transaction. A same-key retry
-replays the stored result; changed arguments return `idempotency_conflict`; expired,
-mismatched, forged and reused tokens are refused; an omitted or empty token returns
-`approval_required`. `request_documents` records a non-funding request with CRM stage
-`awaiting_documents`, never an approval. `make write-demo` runs every path and prints the
-audit chain.
-
-stdio is available for local tools and tests, but it is a trusted local transport and
-skips auth; it is not the scoped demo. The startup warning and
-[`docs/gateway.md`](docs/gateway.md) say so explicitly.
-
-## Agent and reviewer console
-
-The agent is one LangGraph 1.2.19 graph with a SQLite checkpointer. It runs eight stages:
-intake and classification, extraction with citations, deterministic validation, the
-tenant-wide duplicate cross-check and evidence reconciliation, summary and recommendation,
-human approval (`interrupt()`), execution through MCP, and audit verification. A pending
-approval survives a process restart; resuming uses `Command(resume=...)` and the same
-thread id, so extraction and recommendation are not re-run. A refused approval returns to
-the approval stage for a fresh token; a committed decision is reconciled without a second
-write.
-
-The reviewer console is FastAPI, Jinja2 and HTMX with no build step. It shows the case
-queue, documents, extracted fields with page and bbox citations, flags grouped by severity,
-the recommendation and conditions, the decision form, and the audit preview. The console
-mints two things only after the reviewer acts: the single-use HMAC approval token bound to
-the case, decision and payload, and a short-lived `freight:approve` bearer token for the
-decision call. Neither token enters graph state or the `CaseResult`; the runner holds them
-in a transient vault for the execute node. The long-lived agent token only carries
-`freight:read` and `freight:write`. Hard stops cannot be approved from the UI or the
-service; a hold recommendation can only request documents or decline; and a case can have
-exactly one committed decision.
-
-```bash
-make demo       # gateway + agent + console; both cases completed, then inspect the results
-make console    # manual review: two cases wait at the approval interrupt
-make demo-auto  # headless completion without the console
-```
-
-`make demo` prints the console URL and a walkthrough, completes the onboarding and invoice
-cases, and keeps the console open so the committed decisions and audit chains can be
-inspected. It does not open a browser. `make console` leaves the same two cases pending for
-a human review. The decision is written once with a deterministic idempotency key, and the
-audit chain is verified on the way back. See [`docs/agent.md`](docs/agent.md) for the state
-model, token boundary, idempotency and failure paths.
-
-## Evaluation
-
-`make eval` runs the naive baseline and the fixed pipeline on the same 12 eval cases, then
-reports the 4 held-out carriers separately. It needs no network and no API key: both
-pipelines use `FakeProvider`, while the fixed pipeline extracts with the deterministic
-template parser and writes through a real in-process FastMCP HTTP gateway.
-
-- **Baseline:** one prompt over concatenated document text, no classification, citations,
-  validators, approval or audit, and a direct CRM write that ignores the idempotency key.
-  It parses the provider's JSON decision; the offline `FakeProvider` returns a deterministic
-  approve, and an unparseable answer is recorded as a fallback approve rather than hidden.
-- **Fixed:** the eight-stage LangGraph runner and the real gateway. The harness acts as an
-  automated reviewer: it mints the console-side approval token and the short-lived
-  `freight:approve` bearer token, then resumes the interrupt through the console service.
-  A probe suite exercises blank, expired, mismatched, wrong-payload and reused approval
-  tokens before the release run.
-- **Metrics:** classification accuracy, field F1 for clean and noisy cases, citation
-  accuracy, hard-stop recall, false-approve rate, red-flag precision, decision agreement,
-  approval bypass, duplicate writes, audit completeness, injection resistance, tool-call
-  success, p50/p95 latency and token counts/cost.
-- **Hard gates:** 100% hard-stop recall, zero false approves on hard stops, zero approval
-  bypasses, zero duplicate writes, 100% audit completeness and 100% injection resistance.
-  The audit gate requires read, extraction, recommendation, write and replay events with
-  hashes. The process exits non-zero when a fixed-pipeline gate fails. A subset/smoke run is
-  marked not applicable instead of claiming a release pass. The baseline is expected to
-  fail and its gate status is shown for contrast.
-
-Reports are written to `reports/eval-report.json` (source of truth) and
-`reports/eval-report.md`; both are generated files and gitignored. The JSON includes the
-per-case rows, metric intervals, failure gallery, held-out results, manifest hash,
-provider, pricing, timestamp and caveats. `make eval` uses no prices and reports token
-counts with `$0.00` for the free offline model; `make eval-live` runs against
-`LIVE_PROVIDER` (default `orcarouter`, or `lfm3`) and accepts
-`LIVE_INPUT_PRICE_PER_1K`/`LIVE_OUTPUT_PRICE_PER_1K` to compute an estimated cost.
+- [60–90 second walkthrough](docs/demo-script.md) — **video placeholder: the recording is
+  being finished and the link will be added with the `v0.1.0` release.**
+- [Case study](docs/case-study.md)
+- [Learning map](docs/learning/agent-mcp.md)
+- [Full evaluation report](docs/evals/agent-eval.md)
+- [Demo script](docs/demo-script.md)
+- [Spec and build tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 
 ## The problem
 
-Freight factors underwrite small carriers and buy their invoices. The work arrives as a packet of PDFs and scans: an onboarding application, W-9, certificate of insurance, bank letter, authority snapshot, rate confirmation, BOL, POD and invoice. An underwriter keys the fields, checks identity, insurance and authority, catches duplicate invoices and arithmetic errors, writes a summary, and updates the CRM.
+Freight factors underwrite small carriers and buy their invoices. The work arrives as a
+packet of PDFs and scans: an application, W-9, certificate of insurance, bank letter,
+authority snapshot, rate confirmation, BOL, POD and invoice. An underwriter keys the fields,
+cross-checks identity, insurance and authority, catches duplicate invoices and arithmetic
+errors, writes a summary, and updates the CRM. It is slow, inconsistent, and difficult to
+audit afterwards. A chat assistant does not fix that. The agent needs typed business tools,
+scoped permissions, a human approval before any side effect, and a replay-safe audit trail.
 
-The work is slow, inconsistent and hard to audit. A generic chatbot is not enough. The agent needs typed business tools, scoped permissions, a human approval before any side effect, and a replay-safe audit trail.
+This project proves that workflow can be built end to end with synthetic data, a free local
+model, and no paid infrastructure. It also measures the difference between a naive prompt
+and a guarded pipeline on the same cases, and it fails the release if any safety gate breaks.
 
-## What this will be
+## Architecture
 
-A synthetic end-to-end slice that:
+```mermaid
+flowchart LR
+    R[Underwriter] --> C[Reviewer console<br/>FastAPI + HTMX]
+    C -->|start or resume| A[LangGraph agent<br/>8 stages, SQLite checkpointer]
+    A -->|typed MCP tools over HTTP| G[MCP gateway<br/>FastMCP]
+    G --> D[(SQLite<br/>cases, documents, decisions)]
+    G --> I[(Idempotency store)]
+    G --> L[(Append-only audit log)]
+    C -.->|mints HMAC approval token<br/>bound to case, payload, expiry| G
+    D -.->|pending interrupt<br/>read by console| C
+```
 
-1. Ingests a carrier packet and classifies the documents.
-2. Extracts fields with page and bounding-box citations.
-3. Runs deterministic validators for identity, insurance, authority, bank changes, duplicate invoices, invoice arithmetic and PODs.
-4. Produces a red-flag summary and a recommendation with evidence.
-5. Pauses for a human underwriter to approve, approve with conditions, decline or request documents.
-6. Writes one audited, idempotent decision and CRM update through an MCP gateway.
+The console is the only component that can mint an approval token. The agent holds
+`freight:read` and `freight:write`; it cannot approve its own recommendation. The approval
+token is bound to the case, decision, canonical payload hash, approver, expiry and a
+single-use `jti`. The gateway verifies it inside the same transaction that writes the
+decision, CRM stage and audit event.
 
-The gateway exposes eight typed tools with `freight:read`, `freight:write` and `freight:approve` scopes, tenant binding, a console-minted approval token, an idempotency store and an append-only audit log.
+The eight agent stages are intake/classification, extraction with citations, deterministic
+validation, duplicate cross-check and evidence reconciliation, summary and recommendation,
+human approval (`interrupt()`), execution through MCP, and audit verification. The graph
+state survives a process restart in a SQLite checkpointer; the gateway keeps its own
+application tables and audit store.
 
-## What makes it credible
+## The gateway tools
 
-- **Negative paths are the demo:** a write without approval is refused, a retry does not duplicate, a wrong scope gets a 403, a cross-tenant call is blocked, an injected document does not change the decision, and the audit chain names the approver.
-- **Deterministic rules own the hard stops.** The LLM extracts and explains; it cannot override a hard stop.
-- **A real eval:** 12 fixed cases plus 4 held out, a naive baseline, a fixed pipeline, deterministic metrics and hard gates for unsafe behaviour.
-- **No real data:** every company, carrier, document, bank account and number is synthetic and watermarked. No employer code, names, metrics or retail workflows.
+One FastMCP server exposes eight typed tools over Streamable HTTP. Every tool has a Pydantic
+input and output contract, a result envelope, a scope, MCP annotations and negative tests.
 
-## Stack
+| Tool | Scope | Side effect | What it returns |
+|---|---|---|---|
+| `read_case` | `freight:read` | None | Case, carrier, document metadata and a sanitized summary |
+| `get_document` | `freight:read` | None | Text, pages, citation boxes and content hash |
+| `get_policy` | `freight:read` | None | Policy pack, thresholds and decision rule for the case type |
+| `check_duplicate` | `freight:read` | None | Invoice-number and document-hash matches |
+| `record_extraction` | `freight:write` | Case state only | Extraction fields with citations |
+| `record_recommendation` | `freight:write` | Case state only | Recommendation, conditions, flags and evidence |
+| `create_decision` | `freight:approve` | One decision, CRM stage, idempotency row and audit event | Committed decision, replay or a typed refusal |
+| `get_audit` | `freight:read` | None | Append-only audit events for the case |
 
-- Python 3.12, FastAPI, Pydantic, SQLite
-- LangGraph 1.2.19 with a SQLite checkpointer and human interrupt
-- FastMCP 4.1.6 / MCP Python SDK 2.3.0 over Streamable HTTP and stdio
-- OrcaRouter `tencent/hy4-preview-free` as the primary free model; local LFM3-1.7B as the fallback
-- FastAPI + Jinja2 + HTMX for the reviewer console
+A token missing a tool scope gets a spec-shaped `403 insufficient_scope` with a
+`WWW-Authenticate` challenge, not a `200` with an error body. A cross-tenant call gets
+`403 tenant_mismatch`. Invalid or expired tokens get `401`. **stdio skips auth**; it is a
+trusted local convenience, never the security boundary.
 
-## Status
+## Measured results
 
-The spec is the destination. Implementation is tracked in public tickets #2–#9, with native blocking edges. The first demo is local; a recorded walkthrough is the public proof. A hosted deployment is a follow-up, not part of the first slice.
+`make eval` runs the same 12 evaluation cases through two pipelines, then reports 4 held-out
+carriers separately. It is fully offline: both pipelines use `FakeProvider`, the fixed
+pipeline extracts with the deterministic template parser, and it writes through a real
+in-process FastMCP HTTP gateway. The numbers below come from the generated report, not a
+summary written by hand.
+
+| Metric (12 eval cases) | Naive baseline | Fixed pipeline |
+|---|---:|---:|
+| Document classification accuracy | 0.0% | **100.0%** |
+| Field F1, clean packets | 0.0% | **100.0%** |
+| Field F1, noisy packets | 0.0% | **100.0%** |
+| Citation accuracy | 0.0% | **100.0%** |
+| Hard-stop recall | 0.0% | **100.0%** |
+| False approves on hard stops | 100.0% | **0.0%** |
+| Red-flag precision | 0.0% | **100.0%** |
+| Decision agreement with the oracle | 16.7% | **100.0%** |
+| Approval bypass rate | 100.0% | **0.0%** |
+| Duplicate writes after retry | 100.0% | **0.0%** |
+| Audit completeness | 0.0% | **100.0%** |
+| Injection resistance | 0.0% (0/2) | **100.0%** |
+| Tool-call success | n/a (no tools) | **100.0%** (167 calls) |
+| p95 latency | 40.1 ms | 2252.8 ms |
+| Model cost | $0.0000 | $0.0000 |
+
+The fixed pipeline's latency is higher because every case runs eight graph stages, persists
+state and makes real HTTP tool calls. The baseline is a single prompt and a direct database
+write. The offline model has no dollar price, so token counts are estimates and cost is
+reported as `$0.00`.
+
+**The six hard gates** block release. All passed on the fixed pipeline, and all failed on the
+baseline as expected:
+
+| Gate | Requirement | Baseline | Fixed | Status |
+|---|---|---:|---:|---|
+| Hard-stop recall | ≥ 100% | 0.0% | 100.0% | PASS |
+| False approves on hard stops | 0.0% | 100.0% | 0.0% | PASS |
+| Approval bypasses | 0.0% | 100.0% | 0.0% | PASS |
+| Duplicate writes | 0.0% | 100.0% | 0.0% | PASS |
+| Audit completeness | ≥ 100% | 0.0% | 100.0% | PASS |
+| Injection resistance | ≥ 100% | 0.0% | 100.0% | PASS |
+
+The six approval probes (blank, expired, mismatched case, mismatched decision, wrong payload
+and reused token) were all blocked. The four held-out carriers are reported separately and
+are not part of the gate: the fixed pipeline agreed on all four, versus one of four for the
+baseline. See [the full report](docs/evals/agent-eval.md) for per-case rows, intervals,
+the failure gallery and caveats.
+
+## What the review caught
+
+The first eval baseline ignored the model response and always approved, which made the
+headline comparison look better than it was. The console also initially let a reviewer
+approve a hold recommendation, expired approvals were terminal instead of returning to the
+approval stage, and two concurrent approvals could double-write a decision. All four were
+fixed before release: the baseline now parses the provider's answer with explicit fallbacks,
+the console derives its actions from the recommendation and the service enforces them, a
+refused approval resumes for a fresh token, and a unique `(tenant, case)` constraint plus an
+in-transaction check allows exactly one decision. Regression tests cover each fix.
+
+## Threat model and failure modes
+
+The assets are the case packet, the decision, the audit chain and the tokens. The adversaries
+are a malicious document, an over-broad agent token, a replayed approval, a retry after a
+timeout and a cross-tenant request. The controls are below.
+
+- **Documents are untrusted.** Text aimed at an agent is flagged as
+  `document_instruction_injection`, quoted nowhere, and held for manual review. It cannot
+  change the risk facts or override a hard stop.
+- **The model cannot choose tools.** LangGraph nodes call the typed gateway tools
+  deterministically. The model extracts and explains; the rule engine owns severity.
+- **The agent cannot self-approve.** Approval tokens are minted only by the console, bound to
+  the payload and single-use. The signing key never enters the agent process.
+- **Writes are replay-safe.** A same-key retry returns the original decision; changed
+  arguments return `idempotency_conflict`; a second decision for the same case returns
+  `case_already_decided`, which the agent reconciles.
+- **Tenant isolation is enforced on every call.** Security denials are audited under the
+  caller's tenant, never the victim's.
+- **The audit is append-only.** SQLite triggers reject `UPDATE` and `DELETE`.
+
+Out of scope for this slice: a hosted API, OAuth 2.1/PRM/PKCE/JWKS, a real identity provider,
+TLS, rate limiting, a real CRM, real carrier or bank integrations, and any legal or
+regulatory compliance claim. The local HS256 issuer and SQLite store are demo
+infrastructure.
+
+## Quickstart
+
+Python 3.12. No API key and no network are needed for the demo or the evaluation.
+
+```bash
+make install
+make demo     # gateway + agent + console; completes two cases, then serves http://127.0.0.1:8000
+make console  # same stack, but both cases wait for a manual decision
+make eval     # offline baseline vs fixed on 12 eval + 4 held-out cases
+make test     # offline pytest suite
+make lint     # ruff check and format check
+```
+
+`make demo` prints the console URL and a short walkthrough. It does not open a browser. Use
+the console to inspect the queue, the documents, cited fields, flags, recommendation,
+decision and audit chain. `make console` is the manual-review path: start a case, read the
+evidence, then approve, conditionally approve, decline or request documents.
+
+If the system Python is externally managed, pass the flags your environment needs:
+
+```bash
+make install PIP_FLAGS="--user --break-system-packages"
+```
+
+Optional live model paths are documented in [`docs/agent.md`](docs/agent.md). The evaluation
+itself stays offline unless you run `make eval-live`.
+
+## Demo and screenshots
+
+- [60–90 second script](docs/demo-script.md) and the 5-minute walkthrough script — **video
+  placeholder: recording in progress, link added at release.**
+- [Review queue](docs/screenshots/queue.png)
+- [Case detail with flags and recommendation](docs/screenshots/case-detail.png)
+- [Every field cites a document, page, box and quote](docs/screenshots/citations.png)
+- [Decision and audit chain](docs/screenshots/decision-audit.png)
+- [Evaluation summary](docs/screenshots/eval-table.png)
+
+The demo uses fictional Northwind Freight Capital and its carriers. Every PDF carries a
+`SYNTHETIC` watermark, and no real person, carrier, bank account or document appears
+anywhere in the repository.
+
+## Limits
+
+- The corpus is synthetic: 8 fictional carriers, 16 cases, written by the same generator
+  that produces the labels. It is a correctness harness, not a sample of real freight
+  packets.
+- The offline evaluation uses a deterministic fake provider and a template parser. The fixed
+  pipeline's 100% extraction and citation numbers measure the pipeline contract on known
+  templates, not model quality on messy scans. A live-model run is optional and not part of
+  the release gate.
+- There is no LLM judge, no real sanctions/authority/bank integration, no fraud model and no
+  money movement. "CRM stage" is a local SQLite row.
+- The demo is local only. The approval flow, scopes and audit are real code, but the
+  deployment, identity provider and TLS are not production-grade.
+- Latency is measured on one machine with the in-process gateway; it is not a capacity
+  benchmark.
+
+## What I can do for a client
+
+**A document-workflow reliability review (3–5 days).** I take a packet workflow that already
+has a demo or a prototype, reproduce the unsafe cases, and write down where the model is
+allowed to act and where a deterministic check or a human must intervene. You get a ranked
+failure list, a small regression set, and a before/after evaluation.
+
+**A fixed-scope agent build.** Typed tools, scoped tokens, a human approval gate, idempotent
+writes and an audit trail around one workflow. The deliverable is a working local slice with
+a measured report, not a chat demo that only handles the happy path.
+
+If that is the problem you have, the fastest next step is a short call and three packets or
+failure cases from your current process.
+
+## Learn with me
+
+The [learning map](docs/learning/agent-mcp.md) connects the code to MCP transports and
+scopes, FastMCP, LangGraph state and interrupts, approval tokens, idempotency, audit,
+citation extraction, freight underwriting and evaluation. It includes a reading order and
+exercises. The [case study](docs/case-study.md) is the one-page version of the story.
+
+## Repository map
+
+```text
+src/forge_agent_mcp/
+  corpus/      synthetic PDFs, manifest and ground truth
+  extraction/  classification, cited fields and deterministic fallback
+  rules/       validators, severity, recommendation rubric
+  gateway/     FastMCP server, auth, approval token, idempotency, audit
+  agent/       LangGraph case runner and MCP client
+  console/     FastAPI + Jinja2 + HTMX reviewer console
+  evals/       baseline, fixed pipeline, metrics, gates and reports
+docs/          case study, eval report, learning map, demo script, ADRs
+tests/         offline unit, integration and end-to-end tests
+```
+
+## Documentation
+
+- [Case study](docs/case-study.md)
+- [Evaluation report](docs/evals/agent-eval.md)
+- [Learning map](docs/learning/agent-mcp.md)
+- [Demo script](docs/demo-script.md)
+- [Gateway guide](docs/gateway.md)
+- [Agent and console guide](docs/agent.md)
+- [Domain glossary](CONTEXT.md)
+- [Architecture decisions](docs/adr/)
+- [Agent working notes](AGENTS.md) and [coding standards](CODING_STANDARDS.md)
 
 ## Licence
 
-Project code is MIT (see `LICENSE`). The vendored `htmx.min.js` is htmx 2.0.4 under the
-BSD 0-Clause License; see `src/forge_agent_mcp/console/static/HTMX-LICENSE`.
+Project code is MIT (see [`LICENSE`](LICENSE)). The vendored `htmx.min.js` is htmx 2.0.4
+under the BSD 0-Clause License; see
+[`src/forge_agent_mcp/console/static/HTMX-LICENSE`](src/forge_agent_mcp/console/static/HTMX-LICENSE).
