@@ -1,0 +1,5 @@
+/home/arpan/Forge/forge-agent-mcp/demo-video/huashu-film/out/forge-agent-mcp-launch.mp4  1920×1080  60.00 fps  30.00 s
+✓ no single-frame pops
+· still for ≥1 s: 4.47–5.48s, 8.37–10s, 11.18–12.2s, 14.93–15.98s, 16.23–17.98s, 26.77–28.07s — fine for a reading hold or an end card, dead time anywhere else
+· 4 hard cut(s): 21, 21.02, 23, 23.02s  (average shot 6.0 s)
+· motion per second: 0.4 1.5 0.4 0.6 0.4 0.3 0.2 0.2 0.2 0.1 0.2 0.1 0.1 0.2 0.2 0.2 0.4 0.2 0.3 0.2 1 1.5 1.3 1.2 0.2 0.2 0.1 0.1 0.2 0.1  (contrast 1.03)

@@ -20,6 +20,13 @@ Northgate invoice hold.
 Source: `demos/agent-mcp.demo.ts`, `demos/agent-mcp.scenes.json`,
 `argo.config.mjs`, `playwright.config.ts`, `lfm3-engine.mjs`.
 
+## 30-second launch film
+
+`huashu-film/` is the companion Huashu Motion cut: a 30-second, 60 fps, music-led
+launch film about the approval gate. It uses real frames from the Argo master
+and the console's own palette. See `huashu-film/README.md` for the direction,
+material provenance and reproduce commands.
+
 ## Prerequisites
 
 - Python 3.12, with the repository installed (`make install`).

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction C · The Packet</title>
+<style>
+@font-face { font-family: "Inter"; src: url("../assets/fonts/Inter-var.woff") format("woff"); font-weight: 100 900; }
+@font-face { font-family: "Roboto Condensed"; src: url("../assets/fonts/RobotoCondensed-var.woff") format("woff"); font-weight: 100 900; }
+:root { --cream:#f7f3e9; --green:#173f38; --navy:#142235; --amber:#b45309; }
+* { box-sizing:border-box; }
+html,body { margin:0; width:1920px; height:1080px; overflow:hidden; background:#0e1a28; color:var(--cream); font-family:Inter,sans-serif; }
+.frame { position:relative; width:1920px; height:1080px; overflow:hidden; background:
+  radial-gradient(900px 650px at 22% 18%, #40525b 0%, #243440 38%, #101d2b 75%, #0a141f 100%); }
+.frame:after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,rgba(9,18,28,.7) 0%,transparent 38%,transparent 68%,rgba(9,18,28,.5) 100%); }
+.floor { position:absolute; left:-10%; right:-10%; bottom:-22%; height:64%; background:radial-gradient(ellipse at 50% 20%, rgba(247,243,233,.14), transparent 60%); transform:perspective(700px) rotateX(62deg); transform-origin:50% 0; }
+.stage { position:absolute; inset:0; perspective:1500px; perspective-origin:52% 42%; }
+.screen { position:absolute; left:610px; top:176px; width:1030px; height:700px; border-radius:16px; overflow:hidden; transform:rotateY(-15deg) rotateX(4deg) translateZ(-40px); box-shadow:-40px 60px 100px rgba(0,0,0,.55), 0 0 0 1px rgba(247,243,233,.18); background:#f7f3e9; }
+.screen img { width:100%; height:100%; object-fit:cover; object-position:40% 30%; filter:saturate(.96) brightness(.96); }
+.screen:after { content:""; position:absolute; inset:0; background:linear-gradient(120deg,rgba(255,255,255,.15),transparent 32%,transparent 70%,rgba(10,20,30,.24)); }
+.doc { position:absolute; width:310px; height:400px; border-radius:8px; background:linear-gradient(150deg,#fffdf6,#e9e3d4); box-shadow:0 40px 70px rgba(0,0,0,.42); border:1px solid rgba(255,255,255,.5); padding:28px; color:var(--green); }
+.doc:before { content:""; position:absolute; left:24px; right:24px; top:24px; height:1px; background:rgba(23,63,56,.25); box-shadow:0 52px 0 rgba(23,63,56,.12), 0 76px 0 rgba(23,63,56,.12), 0 100px 0 rgba(23,63,56,.12), 0 124px 0 rgba(23,63,56,.12), 0 148px 0 rgba(23,63,56,.12), 0 172px 0 rgba(23,63,56,.12), 0 196px 0 rgba(23,63,56,.12), 0 220px 0 rgba(23,63,56,.12), 0 244px 0 rgba(23,63,56,.12); }
+.doc .type { position:absolute; left:28px; bottom:24px; font-family:"Roboto Condensed"; font-size:14px; letter-spacing:.18em; text-transform:uppercase; color:rgba(23,63,56,.58); }
+.doc .n { position:absolute; right:26px; bottom:18px; font-size:58px; font-weight:300; letter-spacing:-.04em; color:rgba(23,63,56,.35); }
+.doc.d1 { left:210px; top:330px; transform:rotateY(18deg) rotateZ(-8deg) translateZ(170px); }
+.doc.d2 { left:330px; top:220px; transform:rotateY(18deg) rotateZ(-3deg) translateZ(80px); opacity:.9; }
+.doc.d3 { left:470px; top:128px; transform:rotateY(18deg) rotateZ(4deg) translateZ(-10px); opacity:.75; }
+.seal { position:absolute; left:795px; top:416px; width:230px; height:230px; border-radius:50%; border:3px solid rgba(224,154,82,.95); background:radial-gradient(circle at 38% 32%,#d8893c,#8a3e05 70%); box-shadow:0 30px 60px rgba(0,0,0,.5), inset 0 0 0 10px rgba(247,243,233,.12), inset 0 0 0 12px rgba(0,0,0,.16); display:flex; align-items:center; justify-content:center; transform:rotate(-13deg) translateZ(250px); }
+.seal:before { content:""; position:absolute; inset:18px; border:1px solid rgba(247,243,233,.45); border-radius:50%; }
+.seal span { font-family:"Roboto Condensed"; font-size:19px; letter-spacing:.22em; line-height:1.55; text-align:center; text-transform:uppercase; color:#fff5e7; text-shadow:0 2px 2px rgba(0,0,0,.3); }
+.left { position:absolute; left:92px; top:92px; z-index:3; width:470px; }
+.top { font-family:"Roboto Condensed"; font-size:20px; letter-spacing:.2em; text-transform:uppercase; color:rgba(247,243,233,.58); }
+.kicker { margin-top:86px; font-family:"Roboto Condensed"; font-size:20px; letter-spacing:.24em; text-transform:uppercase; color:#e09a52; }
+.big { margin-top:16px; font-size:84px; line-height:.94; letter-spacing:-.06em; font-weight:800; }
+.big em { font-style:normal; color:#e09a52; }
+.sub { margin-top:24px; width:390px; font-size:22px; line-height:1.4; color:rgba(247,243,233,.66); }
+.tag { position:absolute; left:92px; bottom:92px; font-family:"Roboto Condensed"; font-size:18px; letter-spacing:.18em; text-transform:uppercase; color:rgba(247,243,233,.48); }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="floor"></div>
+  <div class="left">
+    <div class="top"><b>FORGE AGENT + MCP</b> / THE PACKET</div>
+    <div class="kicker">One packet · five documents</div>
+    <div class="big">The paperwork<br>is the <em>world.</em></div>
+    <div class="sub">A recommendation is only as good as the page it came from. The film moves through the packet, not around it.</div>
+  </div>
+  <div class="stage">
+    <div class="doc d3"><div class="type">Certificate of insurance</div><div class="n">03</div></div>
+    <div class="doc d2"><div class="type">Bank letter / voided check</div><div class="n">02</div></div>
+    <div class="doc d1"><div class="type">Carrier application / KYC</div><div class="n">01</div></div>
+    <div class="screen"><img src="../materials/local-forge-agent-mcp/ridgeline-evidence.png" alt="Ridgeline review console"></div>
+    <div class="seal"><span>Human<br>approval<br>required</span></div>
+  </div>
+  <div class="tag">A human decision mints the token · the agent never holds the key</div>
+</div>
+</body>
+</html>

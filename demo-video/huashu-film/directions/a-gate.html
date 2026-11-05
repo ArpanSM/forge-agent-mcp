@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction A · The Gate</title>
+<style>
+@font-face { font-family: "Inter"; src: url("../assets/fonts/Inter-var.woff") format("woff"); font-weight: 100 900; }
+@font-face { font-family: "Roboto Condensed"; src: url("../assets/fonts/RobotoCondensed-var.woff") format("woff"); font-weight: 100 900; }
+:root { --cream:#f7f3e9; --green:#173f38; --navy:#142235; --amber:#b45309; --mint:#e9f2ec; --line:rgba(23,63,56,.16); }
+* { box-sizing: border-box; }
+html,body { margin:0; width:1920px; height:1080px; overflow:hidden; background:var(--cream); color:var(--green); font-family:Inter,sans-serif; }
+.frame { position:relative; width:1920px; height:1080px; overflow:hidden; background:
+  radial-gradient(1200px 700px at 8% 0%, #fffdf7 0%, transparent 62%),
+  var(--cream); }
+.top { position:absolute; left:96px; right:96px; top:64px; display:flex; justify-content:space-between; align-items:center; font-family:"Roboto Condensed"; font-size:21px; letter-spacing:.18em; text-transform:uppercase; }
+.top b { font-weight:700; }
+.top .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--amber); margin-right:12px; vertical-align:1px; }
+.rule-top { position:absolute; left:96px; right:96px; top:112px; height:1px; background:var(--line); }
+.queue-wrap { position:absolute; left:96px; top:166px; width:1010px; height:760px; border-radius:18px; overflow:hidden; border:1px solid rgba(23,63,56,.18); box-shadow:0 34px 70px rgba(20,34,53,.14); background:#fbfbf8; }
+.queue-shot { position:absolute; left:0; top:0; width:1010px; height:760px; background-image:url("../materials/local-forge-agent-mcp/queue-close.png"); background-size:cover; background-position:left top; filter:saturate(.94); }
+.queue-wrap:after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent 58%,rgba(247,243,233,.08) 78%,var(--cream) 100%), linear-gradient(0deg,var(--cream) 0%,transparent 16%); }
+.big { position:absolute; left:1130px; top:208px; width:710px; font-size:104px; line-height:.97; letter-spacing:-.055em; font-weight:800; color:var(--green); }
+.big em { font-style:normal; color:var(--amber); }
+.kicker { position:absolute; left:1132px; top:168px; font-family:"Roboto Condensed"; font-size:22px; letter-spacing:.2em; text-transform:uppercase; color:var(--amber); }
+.sub { position:absolute; left:1136px; top:676px; width:640px; font-size:29px; line-height:1.38; letter-spacing:-.01em; color:rgba(23,63,56,.78); }
+.gate { position:absolute; left:1080px; top:150px; width:34px; height:780px; }
+.gate .bar { position:absolute; left:13px; top:0; width:8px; height:100%; border-radius:6px; background:var(--amber); box-shadow:0 0 0 7px rgba(180,83,9,.10), 0 0 38px rgba(180,83,9,.22); }
+.gate .cap { position:absolute; left:50%; top:-42px; transform:translateX(-50%); white-space:nowrap; font-family:"Roboto Condensed"; font-size:18px; letter-spacing:.22em; color:var(--amber); }
+.gate .cap2 { position:absolute; left:50%; bottom:34px; transform:translateX(-50%); white-space:nowrap; font-family:"Roboto Condensed"; font-size:18px; letter-spacing:.22em; color:rgba(23,63,56,.48); }
+.cursor { position:absolute; left:1178px; top:745px; width:34px; height:48px; filter:drop-shadow(0 5px 9px rgba(20,34,53,.32)); }
+.cursor svg { width:100%; height:100%; }
+.pipeline { position:absolute; left:96px; right:96px; bottom:78px; display:flex; align-items:center; gap:18px; font-family:"Roboto Condensed"; font-size:19px; letter-spacing:.13em; text-transform:uppercase; color:rgba(23,63,56,.58); }
+.pipeline span { padding:10px 16px; border:1px solid rgba(23,63,56,.20); border-radius:100px; background:rgba(255,255,255,.46); white-space:nowrap; }
+.pipeline span.hot { color:var(--amber); border-color:rgba(180,83,9,.45); background:rgba(180,83,9,.07); }
+.pipeline i { font-style:normal; color:rgba(23,63,56,.28); }
+.stamp { position:absolute; right:86px; bottom:166px; width:188px; height:188px; border:2px solid rgba(180,83,9,.55); border-radius:50%; display:flex; align-items:center; justify-content:center; transform:rotate(-9deg); color:var(--amber); text-align:center; font-family:"Roboto Condensed"; font-size:15px; letter-spacing:.18em; line-height:1.55; text-transform:uppercase; opacity:.9; }
+.stamp:before { content:""; position:absolute; inset:9px; border:1px solid rgba(180,83,9,.34); border-radius:50%; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="top"><span><span class="dot"></span><b>FORGE AGENT + MCP</b> / LAUNCH FILM</span><span>1920×1080 · 30S</span></div>
+  <div class="rule-top"></div>
+
+  <div class="queue-wrap"><div class="queue-shot"></div></div>
+
+  <div class="kicker">The last inch</div>
+  <div class="big">It can<br>recommend.<br><em>It cannot<br>approve.</em></div>
+  <div class="sub">One real recommendation, one human decision, one audited write. The agent never holds the key.</div>
+
+  <div class="gate">
+    <div class="cap">HUMAN APPROVAL</div>
+    <div class="bar"></div>
+    <div class="cap2">TOKEN REQUIRED</div>
+  </div>
+
+  <div class="cursor"><svg viewBox="0 0 34 48"><path d="M3 3 L3 38 L12 29 L19 44 L26 40 L19 26 L31 26 Z" fill="#f7f3e9" stroke="#142235" stroke-width="2.4"/></svg></div>
+
+  <div class="stamp">A human<br>decision<br>mints the token</div>
+
+  <div class="pipeline">
+    <span>Packet</span><i>→</i><span>Cited extraction</span><i>→</i><span>Rule engine</span><i>→</i><span class="hot">Human approval</span><i>→</i><span>Audited write</span>
+  </div>
+</div>
+</body>
+</html>

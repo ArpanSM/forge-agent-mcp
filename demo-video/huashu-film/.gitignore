@@ -1,0 +1,9 @@
+# Huashu render and working artifacts
+out/
+.om/
+materials/
+assets/sound.wav
+
+# Large QA sheets
+qa/stills/
+qa/sound-spectrogram.png

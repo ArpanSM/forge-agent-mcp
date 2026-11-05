@@ -1,0 +1,3 @@
+sampled  24 frames
+compared 4 frames reached two ways
+0 errors, 0 warnings  (/home/arpan/Forge/forge-agent-mcp/demo-video/huashu-film)

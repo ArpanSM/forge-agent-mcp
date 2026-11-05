@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="en" data-composition-variables='[
+  {"id":"headline","type":"string","label":"End headline","default":"A freight underwriting agent that cannot approve itself."},
+  {"id":"url","type":"string","label":"Repository URL","default":"github.com/ArpanSM/forge-agent-mcp"},
+  {"id":"caveat","type":"string","label":"Caveat","default":"Synthetic corpus · local demo · not production"},
+  {"id":"stat1","type":"string","label":"Stat 1","default":"100%"},
+  {"id":"stat1Label","type":"string","label":"Stat 1 label","default":"hard-stop recall"},
+  {"id":"stat2","type":"string","label":"Stat 2","default":"0"},
+  {"id":"stat2Label","type":"string","label":"Stat 2 label","default":"duplicate writes"},
+  {"id":"stat3","type":"string","label":"Stat 3","default":"0"},
+  {"id":"stat3Label","type":"string","label":"Stat 3 label","default":"approval bypasses"},
+  {"id":"stat4","type":"string","label":"Stat 4","default":"100%"},
+  {"id":"stat4Label","type":"string","label":"Stat 4 label","default":"audit completeness"},
+  {"id":"accent","type":"color","label":"Amber accent","default":"#b45309"},
+  {"id":"paper","type":"color","label":"Paper","default":"#f7f3e9"},
+  {"id":"ink","type":"color","label":"Ink","default":"#173f38"},
+  {"id":"navy","type":"color","label":"Navy","default":"#142235"},
+  {"id":"endHold","type":"number","label":"End hold (s)","default":6,"min":0,"max":10,"step":0.1,"group":"Rhythm"}
+]'>
+<head>
+<meta charset="utf-8">
+<title>Forge Agent + MCP · The Gate</title>
+<script src="vendor/om.js"></script>
+<script src="vendor/gsap.min.js"></script>
+<style id="om-fonts">
+@font-face { font-family: "Inter"; src: url("assets/fonts/Inter-var.woff") format("woff"); font-weight: 100 900; font-style: normal; }
+@font-face { font-family: "Roboto Condensed"; src: url("assets/fonts/RobotoCondensed-var.woff") format("woff"); font-weight: 100 900; font-style: normal; }
+</style>
+<style>
+  :root {
+    --paper: #f7f3e9;
+    --ink: #173f38;
+    --navy: #142235;
+    --amber: #b45309;
+    --amber-soft: #e09a52;
+    --mint: #e9f2ec;
+    --ui-green: #2f7d63;
+    --rule: rgba(23,63,56,.16);
+    --mono: "Roboto Condensed", "Inter", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background: var(--paper); }
+  #film { position:relative; width:100%; height:100%; overflow:hidden; background:var(--paper); color:var(--ink); font-family:"Inter", sans-serif; }
+  .scene { position:absolute; inset:0; visibility:hidden; opacity:0; overflow:hidden; }
+  #macroWorld, #gateWorld, #endWorld { position:absolute; inset:0; transform-origin:50% 50%; }
+  .scene.first { visibility:visible; opacity:1; }
+  .plate { position:absolute; inset:0; overflow:hidden; }
+  .plate img { width:100%; height:100%; object-fit:cover; object-position:center top; display:block; }
+  .grain { position:absolute; inset:0; z-index:200; pointer-events:none; opacity:.28;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.24'/%3E%3C/svg%3E"); mix-blend-mode:multiply; }
+  .flash { position:absolute; inset:0; z-index:190; background:#fffdf7; opacity:0; pointer-events:none; }
+
+  /* ---------- shared type ---------- */
+  .eyebrow { font-family:var(--mono); font-size:20px; letter-spacing:.18em; text-transform:uppercase; font-weight:600; }
+  .eyebrow .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--amber); margin-right:12px; vertical-align:1px; }
+  .line-mask { display:block; overflow:visible; padding-bottom:.12em; }
+  .line-mask > span { display:block; }
+  .accent { color:var(--amber); }
+
+  /* ---------- hook / queue ---------- */
+  #sc-queue { background:var(--paper); }
+  #queuePlate { position:absolute; inset:0; transform-origin:38% 42%; will-change:transform; }
+  #queuePlate img { width:100%; height:100%; object-fit:cover; object-position:center top; }
+  .queue-scan { position:absolute; left:600px; top:118px; width:1220px; height:2px; z-index:3; opacity:0; background:linear-gradient(90deg,transparent,var(--amber) 18%,var(--amber) 82%,transparent); box-shadow:0 0 22px rgba(180,83,9,.45); }
+  .queue-wash { position:absolute; inset:0; background:
+      linear-gradient(90deg, rgba(247,243,233,.99) 0%, rgba(247,243,233,.97) 24%, rgba(247,243,233,.72) 38%, rgba(247,243,233,0) 54%),
+      linear-gradient(0deg, rgba(247,243,233,.92) 0%, rgba(247,243,233,0) 24%); }
+  .queue-type { position:absolute; left:92px; top:182px; width:840px; z-index:4; }
+  .queue-type .eyebrow { color:var(--amber); margin-bottom:24px; }
+  .queue-type h1 { margin:0; font-size:108px; line-height:1.0; letter-spacing:-.065em; font-weight:800; }
+  .queue-type h1 .amber { color:var(--amber); }
+  .queue-type p { margin:30px 0 0; width:590px; font-size:27px; line-height:1.38; color:rgba(23,63,56,.76); }
+  .queue-type p em { font-style:normal; color:var(--ink); font-weight:600; }
+  .queue-chips { position:absolute; left:96px; top:770px; display:flex; gap:12px; z-index:4; }
+  .chip { font-family:var(--mono); font-size:18px; letter-spacing:.11em; text-transform:uppercase; padding:9px 15px; border:1px solid rgba(23,63,56,.22); border-radius:100px; background:rgba(255,255,255,.52); color:rgba(23,63,56,.72); }
+  .chip.hot { color:#8f3f06; border-color:rgba(180,83,9,.42); background:rgba(180,83,9,.07); }
+  .focus-row { z-index:5; position:absolute; left:332px; top:140px; width:1070px; height:54px; border:2px solid var(--amber); border-radius:9px; box-shadow:0 0 0 7px rgba(180,83,9,.10); opacity:0; }
+  .focus-label { z-index:5; position:absolute; left:740px; top:204px; font-family:var(--mono); font-size:18px; letter-spacing:.12em; text-transform:uppercase; color:var(--amber); opacity:0; white-space:nowrap; background:rgba(247,243,233,.96); padding:5px 9px; border:1px solid rgba(180,83,9,.30); border-radius:4px; }
+  .frame-mark { position:absolute; right:64px; bottom:46px; font-family:var(--mono); font-size:15px; letter-spacing:.18em; text-transform:uppercase; color:rgba(23,63,56,.78); z-index:4; }
+  .frame-mark b { color:rgba(23,63,56,.58); font-weight:500; }
+
+  /* ---------- evidence ---------- */
+  #sc-evidence { background:#fbfbf8; }
+  .ev-plate img { object-position:center 42%; }
+  .ev-band { position:absolute; left:0; right:0; top:0; height:202px; background:linear-gradient(180deg,rgba(247,243,233,.995) 0%,rgba(247,243,233,.995) 78%,rgba(247,243,233,0) 100%); z-index:2; }
+  .ev-head { position:absolute; left:92px; top:54px; z-index:3; width:1740px; display:flex; justify-content:space-between; align-items:flex-end; }
+  .ev-head .left .eyebrow { color:var(--amber); margin-bottom:12px; }
+  .ev-head h2 { margin:0; font-size:58px; line-height:1; letter-spacing:-.045em; font-weight:800; }
+  .ev-head h2 em { font-style:normal; color:var(--amber); }
+  .ev-head .right { font-family:var(--mono); font-size:18px; letter-spacing:.13em; text-transform:uppercase; color:rgba(23,63,56,.66); text-align:right; padding-bottom:8px; margin-right:470px; }
+  .ev-head .right b { color:var(--ui-green); font-weight:500; }
+  .ev-scan { position:absolute; left:748px; top:196px; width:3px; height:760px; background:linear-gradient(180deg,transparent,var(--amber) 18%,var(--amber) 82%,transparent); z-index:3; opacity:0; box-shadow:0 0 24px rgba(180,83,9,.42); }
+  .ev-bbox { position:absolute; border:2px solid var(--amber); border-radius:3px; z-index:3; opacity:0; box-shadow:0 0 0 4px rgba(180,83,9,.10); }
+  .ev-bbox.a { left:960px; top:462px; width:250px; height:48px; }
+  .ev-bbox.b { left:960px; top:610px; width:250px; height:48px; }
+  .ev-bbox .tag { position:absolute; left:-2px; top:-24px; font-family:var(--mono); font-size:14px; letter-spacing:.12em; color:var(--amber); }
+  .ev-strip { position:absolute; left:92px; bottom:46px; width:1180px; padding:20px 28px; background:rgba(247,243,233,.96); border:1px solid rgba(23,63,56,.18); border-left:6px solid var(--amber); border-radius:8px; z-index:4; display:flex; gap:26px; align-items:baseline; box-shadow:0 18px 44px rgba(20,34,53,.10); }
+  .ev-strip .k { font-family:var(--mono); font-size:15px; letter-spacing:.15em; text-transform:uppercase; color:rgba(23,63,56,.64); white-space:nowrap; }
+  .ev-strip .v { font-size:23px; font-weight:700; letter-spacing:-.01em; white-space:nowrap; }
+  .ev-strip .c { font-family:var(--mono); font-size:17px; color:rgba(23,63,56,.74); white-space:nowrap; }
+
+  /* ---------- macro citation ---------- */
+  #sc-macro { background:var(--paper); }
+  .macro-bg { position:absolute; inset:0; background:
+      radial-gradient(900px 550px at 82% 8%, #fffdf6 0%, transparent 55%),
+      linear-gradient(0deg, rgba(23,63,56,.045) 0%, transparent 26%); }
+  .macro-head { position:absolute; left:92px; top:70px; width:1740px; display:flex; justify-content:space-between; align-items:flex-start; }
+  .macro-head .eyebrow { color:var(--amber); margin-bottom:14px; }
+  .macro-head h2 { margin:0; font-size:84px; line-height:.92; letter-spacing:-.06em; font-weight:800; }
+  .macro-head h2 em { font-style:normal; color:var(--amber); }
+  .macro-head .meta { text-align:right; font-family:var(--mono); font-size:18px; letter-spacing:.12em; text-transform:uppercase; color:rgba(23,63,56,.66); line-height:1.9; padding-top:38px; }
+  .macro-head .meta b { color:var(--ink); font-weight:500; }
+  .crow { position:absolute; left:92px; width:1736px; height:166px; border-top:1px solid rgba(23,63,56,.18); display:flex; align-items:center; padding:0 24px; gap:0; }
+  .crow:nth-child(3) { top:330px; }
+  .crow:nth-child(4) { top:496px; }
+  .crow:nth-child(5) { top:662px; }
+  .crow .field { width:224px; font-size:27px; font-weight:700; }
+  .crow .field small { display:block; font-family:var(--mono); font-size:15px; font-weight:400; letter-spacing:.07em; color:rgba(23,63,56,.64); margin-top:6px; }
+  .crow .value { width:330px; font-size:31px; font-weight:700; letter-spacing:-.02em; }
+  .crow .conf { width:150px; }
+  .crow .conf span { font-family:var(--mono); font-size:16px; letter-spacing:.08em; color:var(--ui-green); border:1px solid #b9d8c5; background:#eaf5ee; border-radius:100px; padding:6px 10px; }
+  .crow .cite { width:560px; font-family:var(--mono); font-size:18px; line-height:1.5; color:rgba(23,63,56,.72); }
+  .crow .cite b { font-weight:500; color:var(--ink); }
+  .crow .bbox { display:inline-block; border:1px solid var(--amber); color:var(--amber); padding:2px 7px; border-radius:3px; margin-left:8px; font-size:15px; letter-spacing:.05em; }
+  .crow .quote { width:440px; font-size:23px; line-height:1.3; color:rgba(23,63,56,.64); }
+  .macro-scan { position:absolute; left:92px; top:300px; width:1736px; height:2px; z-index:4; opacity:0; background:linear-gradient(90deg,transparent,var(--ui-green) 15%,var(--ui-green) 85%,transparent); box-shadow:0 0 20px rgba(47,125,99,.30); }
+  .macro-foot { position:absolute; left:92px; bottom:60px; width:1736px; display:flex; justify-content:space-between; align-items:baseline; }
+  .macro-foot .big { font-size:48px; font-weight:800; letter-spacing:-.04em; }
+  .macro-foot .big em { font-style:normal; color:var(--amber); }
+  .macro-foot .small { font-family:var(--mono); font-size:17px; letter-spacing:.14em; text-transform:uppercase; color:rgba(23,63,56,.48); }
+
+  /* ---------- gate ---------- */
+  #sc-gate { background:var(--paper); }
+  .gate-bg { position:absolute; inset:0; background:
+      radial-gradient(1100px 650px at 18% 0%, #fffdf6 0%, transparent 58%),
+      radial-gradient(800px 600px at 95% 100%, rgba(180,83,9,.06) 0%, transparent 60%); }
+  .gate-copy { position:absolute; left:92px; top:110px; width:690px; z-index:5; }
+  .gate-copy .eyebrow { color:var(--amber); margin-bottom:20px; }
+  .gate-copy h2 { margin:0; font-size:78px; line-height:1.06; letter-spacing:-.06em; font-weight:800; }
+  .gate-copy h2 em { font-style:normal; color:var(--amber); }
+  .gate-copy h2 .fade { color:rgba(23,63,56,.62); }
+  .gate-rule { width:300px; height:4px; margin-top:18px; background:var(--amber); transform-origin:0 50%; }
+  .gate-copy p { margin:26px 0 0; width:600px; font-size:25px; line-height:1.42; color:rgba(23,63,56,.70); }
+  .gate-copy p b { color:var(--ink); font-weight:600; }
+  .rec-ticket { position:absolute; left:826px; top:292px; width:420px; height:548px; background:#fffefa; border:1px solid rgba(23,63,56,.18); border-top:5px solid var(--ui-green); border-radius:10px; padding:26px 28px; z-index:4; box-shadow:0 28px 70px rgba(20,34,53,.16); }
+  .rec-ticket .head { display:flex; justify-content:space-between; align-items:baseline; }
+  .rec-ticket .head .t { font-size:26px; font-weight:700; letter-spacing:-.02em; }
+  .rec-ticket .head .pill { font-family:var(--mono); font-size:14px; letter-spacing:.06em; color:#276b55; border:1px solid #b9d8c5; background:#eaf5ee; padding:5px 9px; border-radius:5px; }
+  .rec-ticket .sub { font-family:var(--mono); font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:rgba(23,63,56,.74); margin-top:8px; }
+  .rec-ticket .verdict { display:flex; gap:16px; align-items:center; margin-top:34px; }
+  .rec-ticket .check { width:52px; height:52px; border-radius:12px; background:var(--mint); border:1px solid #b9d8c5; display:flex; align-items:center; justify-content:center; }
+  .rec-ticket .check svg { width:26px; height:26px; stroke:var(--ui-green); stroke-width:3; fill:none; }
+  .rec-ticket .verdict .a { font-size:52px; line-height:.9; font-weight:800; letter-spacing:-.04em; }
+  .rec-ticket .verdict .b { font-family:var(--mono); font-size:14px; color:rgba(23,63,56,.70); margin-top:6px; }
+  .rec-ticket .body { margin-top:30px; font-size:18px; line-height:1.45; color:rgba(23,63,56,.72); }
+  .rec-ticket .note { margin-top:24px; padding-top:18px; border-top:1px solid rgba(23,63,56,.14); font-family:var(--mono); font-size:13px; line-height:1.6; color:rgba(23,63,56,.74); }
+  .rec-ticket .footer { position:absolute; left:28px; right:28px; bottom:20px; display:flex; gap:8px; flex-wrap:wrap; }
+  .rec-ticket .footer .chip { font-size:13px; padding:6px 9px; }
+  .gate-bar { position:absolute; left:1276px; top:140px; width:18px; height:800px; z-index:8; transform:translateY(-980px); }
+  .gate-bar .bar { position:absolute; left:5px; top:0; width:8px; height:100%; border-radius:6px; background:var(--amber); box-shadow:0 0 0 7px rgba(180,83,9,.10), 0 0 36px rgba(180,83,9,.26); }
+  .gate-bar .cap { position:absolute; left:50%; top:-44px; transform:translateX(-50%); white-space:nowrap; font-family:var(--mono); font-size:16px; letter-spacing:.2em; text-transform:uppercase; color:var(--amber); }
+  .gate-bar .cap2 { position:absolute; left:50%; bottom:-40px; transform:translateX(-50%); white-space:nowrap; font-family:var(--mono); font-size:16px; letter-spacing:.2em; text-transform:uppercase; color:rgba(23,63,56,.78); }
+  .decision-panel { position:absolute; left:1324px; top:166px; width:506px; height:748px; background:#fffefa; border:1px solid rgba(23,63,56,.18); border-radius:10px; padding:24px 26px; z-index:4; box-shadow:0 28px 70px rgba(20,34,53,.14); }
+  .decision-panel .head { display:flex; justify-content:space-between; align-items:baseline; }
+  .decision-panel .head .t { font-size:24px; font-weight:700; letter-spacing:-.02em; }
+  .decision-panel .head .n { font-family:var(--mono); font-size:13px; color:rgba(23,63,56,.78); }
+  .decision-panel .sub { font-size:14px; line-height:1.4; color:rgba(23,63,56,.80); margin-top:8px; }
+  .human-bar { margin-top:16px; height:36px; border-radius:5px; background:var(--mint); border:1px solid #b9d8c5; display:flex; align-items:center; padding:0 12px; font-family:var(--mono); font-size:13px; letter-spacing:.12em; color:var(--ui-green); opacity:0; }
+  .human-bar .dot { width:8px; height:8px; border-radius:50%; background:var(--ui-green); margin-right:8px; }
+  .options { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+  .opt { position:relative; height:52px; border:1px solid rgba(23,63,56,.26); border-radius:6px; display:flex; align-items:center; padding:0 12px; font-size:16px; font-weight:600; color:rgba(23,63,56,.84); background:#fff; }
+  .opt .radio { width:15px; height:15px; border-radius:50%; border:1.5px solid rgba(23,63,56,.42); margin-right:9px; flex:none; }
+  .opt.recommended { border-color:rgba(23,63,56,.48); }
+  .opt.recommended:after { content:"RECOMMENDED"; position:absolute; right:8px; top:5px; font-family:var(--mono); font-size:8px; letter-spacing:.08em; color:var(--amber); }
+  .opt.selected { border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); }
+  .opt.selected .radio { border-color:var(--ink); background:radial-gradient(circle,var(--ink) 0 38%,transparent 42%); }
+  .opt.disabled { opacity:.52; }
+  .field-label { font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(23,63,56,.86); margin-top:16px; display:flex; justify-content:space-between; }
+  .fake-input { margin-top:6px; height:56px; border:1px solid rgba(23,63,56,.22); border-radius:6px; background:#fbfaf5; padding:10px 12px; font-size:13px; line-height:1.35; color:rgba(23,63,56,.84); }
+  .decision-panel .identity { margin-top:12px; height:38px; border:1px solid rgba(23,63,56,.22); border-radius:6px; display:flex; align-items:center; padding:0 11px; font-family:var(--mono); font-size:13px; color:rgba(23,63,56,.84); }
+  .resume { margin-top:14px; height:52px; border-radius:6px; background:var(--ink); color:#f7f3e9; display:flex; align-items:center; justify-content:center; gap:10px; font-size:16px; font-weight:600; opacity:.42; }
+  .resume .plane { width:18px; height:18px; }
+  .resume .plane svg { width:100%; height:100%; fill:none; stroke:currentColor; stroke-width:1.6; }
+  .decision-panel .helper { margin-top:10px; font-family:var(--mono); font-size:11.5px; line-height:1.45; color:rgba(23,63,56,.84); }
+  .token-chip { position:absolute; left:1050px; top:494px; z-index:12; padding:9px 14px; border-radius:100px; background:var(--ink); color:var(--paper); font-family:var(--mono); font-size:14px; letter-spacing:.04em; box-shadow:0 18px 42px rgba(20,34,53,.34); opacity:0; }
+  .token-chip b { color:#f0b67f; font-weight:500; }
+  .cursor { position:absolute; left:0; top:0; z-index:20; width:34px; height:48px; opacity:0; filter:drop-shadow(0 5px 9px rgba(20,34,53,.32)); }
+  .cursor svg { width:100%; height:100%; }
+  .gate-stamp { position:absolute; left:1660px; top:760px; z-index:15; width:116px; height:116px; border-radius:50%; border:2px solid var(--ui-green); background:var(--mint); color:var(--ui-green); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; opacity:0; box-shadow:0 14px 34px rgba(20,34,53,.20); }
+  .gate-stamp svg { width:28px; height:28px; stroke:var(--ui-green); stroke-width:3; fill:none; }
+  .click-ring { position:absolute; z-index:19; width:38px; height:38px; border:2px solid var(--amber); border-radius:50%; opacity:0; }
+
+  /* ---------- commit ---------- */
+  #sc-commit { background:var(--paper); }
+  .commit-plate img { object-position:center 46%; }
+  .commit-left { position:absolute; left:0; top:0; bottom:0; width:560px; background:linear-gradient(90deg,rgba(247,243,233,.99) 0%,rgba(247,243,233,.98) 62%,rgba(247,243,233,0) 100%); z-index:3; }
+  .commit-copy { position:absolute; left:92px; top:160px; width:430px; z-index:4; }
+  .commit-copy .eyebrow { color:var(--amber); margin-bottom:22px; }
+  .commit-copy h2 { margin:0; font-size:84px; line-height:.92; letter-spacing:-.06em; font-weight:800; }
+  .commit-copy p { margin:24px 0 0; font-size:23px; line-height:1.4; color:rgba(23,63,56,.68); }
+  .commit-strip { position:absolute; left:92px; bottom:62px; width:936px; background:rgba(247,243,233,.97); border:1px solid rgba(23,63,56,.18); border-left:6px solid var(--ui-green); border-radius:8px; padding:16px 22px; z-index:4; display:flex; gap:28px; align-items:baseline; box-shadow:0 18px 44px rgba(20,34,53,.10); }
+  .commit-strip .k { font-family:var(--mono); font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:rgba(23,63,56,.72); }
+  .commit-strip .v { font-family:var(--mono); font-size:16px; color:var(--ink); }
+  .commit-scan { position:absolute; left:560px; top:220px; width:1270px; height:2px; z-index:2; opacity:0; background:linear-gradient(90deg,transparent,var(--ui-green) 15%,var(--ui-green) 85%,transparent); box-shadow:0 0 18px rgba(47,125,99,.28); }
+  .commit-stamp { position:absolute; right:82px; top:250px; z-index:7; width:126px; height:126px; border-radius:50%; border:2px solid var(--ui-green); background:var(--mint); color:var(--ui-green); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; opacity:0; box-shadow:0 16px 38px rgba(20,34,53,.20); }
+  .commit-stamp svg { width:28px; height:28px; stroke:var(--ui-green); stroke-width:3; fill:none; }
+  .commit-ring { position:absolute; left:1012px; top:530px; width:520px; height:500px; border:2px solid rgba(47,125,99,.72); border-radius:12px; z-index:3; box-shadow:0 0 0 7px rgba(47,125,99,.08); opacity:0; }
+  .commit-ring .tag { display:none; position:absolute; right:12px; top:-28px; font-family:var(--mono); font-size:14px; letter-spacing:.12em; color:var(--ui-green); }
+
+  /* ---------- audit ---------- */
+  #sc-audit { background:#fbfbf8; }
+  .audit-plate img { object-position:center 40%; }
+  .audit-left { position:absolute; left:0; top:0; bottom:0; width:760px; background:linear-gradient(90deg,rgba(247,243,233,.99) 0%,rgba(247,243,233,.98) 62%,rgba(247,243,233,0) 100%); z-index:3; }
+  .audit-copy { position:absolute; left:92px; top:142px; width:430px; z-index:4; }
+  .audit-copy .eyebrow { color:var(--amber); margin-bottom:22px; }
+  .audit-copy h2 { margin:0; font-size:82px; line-height:.92; letter-spacing:-.06em; font-weight:800; }
+  .audit-copy p { margin:24px 0 0; font-size:22px; line-height:1.4; color:rgba(23,63,56,.68); }
+  .audit-copy p b { color:var(--ui-green); font-weight:600; }
+  .audit-scan { position:absolute; left:140px; top:160px; width:1480px; height:2px; z-index:2; opacity:0; background:linear-gradient(90deg,transparent,var(--amber) 15%,var(--amber) 85%,transparent); box-shadow:0 0 18px rgba(180,83,9,.26); }
+  .audit-pulse { position:absolute; left:144px; top:160px; width:1460px; height:42px; z-index:2; opacity:0; border-top:2px solid var(--amber); border-bottom:1px solid rgba(180,83,9,.22); background:linear-gradient(90deg,transparent,rgba(180,83,9,.08),transparent); }
+  .audit-ring { position:absolute; left:144px; top:626px; width:1460px; height:102px; border:2px solid var(--amber); border-radius:8px; box-shadow:0 0 0 7px rgba(180,83,9,.10); z-index:3; opacity:0; }
+  .audit-ring .tag { position:absolute; left:0; top:-28px; font-family:var(--mono); font-size:14px; letter-spacing:.12em; color:var(--amber); }
+  .write-card { position:absolute; left:760px; bottom:60px; width:980px; background:rgba(247,243,233,.98); border:1px solid rgba(23,63,56,.20); border-top:5px solid var(--amber); border-radius:9px; padding:20px 24px; z-index:5; box-shadow:0 24px 60px rgba(20,34,53,.18); opacity:0; }
+  .write-card .head { display:flex; justify-content:space-between; align-items:baseline; }
+  .write-card .head .t { font-family:var(--mono); font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--amber); }
+  .write-card .head .s { font-family:var(--mono); font-size:13px; color:var(--ui-green); }
+  .write-grid { margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:6px 30px; }
+  .write-grid div { font-family:var(--mono); font-size:14px; line-height:1.55; color:rgba(23,63,56,.66); }
+  .write-grid b { color:var(--ink); font-weight:500; }
+  .write-foot { margin-top:12px; padding-top:10px; border-top:1px solid rgba(23,63,56,.14); display:flex; gap:10px; }
+  .write-foot .chip { font-size:12px; padding:6px 9px; }
+
+  /* ---------- burst ---------- */
+  #sc-burst { background:var(--navy); color:var(--paper); }
+  .burst-shot { position:absolute; inset:0; visibility:hidden; opacity:0; }
+  .burst-shot .plate img { object-position:center top; }
+  .burst-wash { position:absolute; inset:0; background:linear-gradient(90deg,rgba(20,34,53,.96) 0%,rgba(20,34,53,.86) 34%,rgba(20,34,53,.20) 70%,rgba(20,34,53,.05) 100%); }
+  .burst-stat { position:absolute; left:92px; top:220px; right:92px; bottom:0; z-index:3; width:820px; }
+  .burst-stat .k { font-family:var(--mono); font-size:18px; letter-spacing:.2em; text-transform:uppercase; color:#e09a52; margin-bottom:18px; }
+  .burst-stat .n { margin-top:12px; font-size:236px; line-height:1.25; letter-spacing:-.08em; font-weight:800; color:var(--paper); font-variant-numeric:tabular-nums; }
+  .burst-stat .n em { font-style:normal; color:#e09a52; }
+  .burst-stat .l { margin-top:28px; font-size:31px; line-height:1.2; color:rgba(247,243,233,.72); }
+  .burst-stat .src { position:absolute; left:0; bottom:72px; font-family:var(--mono); font-size:14px; letter-spacing:.16em; text-transform:uppercase; color:rgba(247,243,233,.64); }
+  .burst-line { position:absolute; left:92px; bottom:150px; width:720px; height:1px; background:linear-gradient(90deg,#e09a52,transparent); }
+  .last-inch { position:absolute; inset:0; background:var(--paper); color:var(--ink); z-index:4; }
+  .last-inch .copy { position:absolute; left:92px; top:300px; width:1500px; }
+  .last-inch .k { font-family:var(--mono); font-size:19px; letter-spacing:.2em; text-transform:uppercase; color:var(--amber); margin-bottom:20px; }
+  .last-inch h2 { margin:0; font-size:132px; line-height:.9; letter-spacing:-.07em; font-weight:800; }
+  .last-inch h2 em { font-style:normal; color:var(--amber); }
+  .last-inch .gate-hair { position:absolute; left:1190px; top:0; bottom:0; width:10px; background:var(--amber); box-shadow:0 0 0 8px rgba(180,83,9,.08), 0 0 50px rgba(180,83,9,.18); }
+
+  /* ---------- end ---------- */
+  #sc-end { background:var(--paper); }
+  .end-bg { position:absolute; inset:0; background:
+      radial-gradient(1000px 620px at 18% 0%, #fffdf7 0%, transparent 60%),
+      radial-gradient(900px 600px at 96% 100%, rgba(20,34,53,.07) 0%, transparent 58%),
+      linear-gradient(0deg, rgba(23,63,56,.035) 0%, transparent 30%); }
+  .end-left { position:absolute; left:108px; top:104px; width:1030px; z-index:3; }
+  .end-left .eyebrow { color:var(--amber); margin-bottom:36px; }
+  .end-left h1 { margin:0; font-size:86px; line-height:.96; letter-spacing:-.06em; font-weight:800; }
+  .end-left h1 em { font-style:normal; color:var(--amber); }
+  .end-rule { margin-top:26px; width:760px; height:5px; background:var(--ink); transform-origin:0 50%; }
+  .end-sub { margin-top:22px; width:780px; font-size:25px; line-height:1.4; color:rgba(23,63,56,.70); }
+  .end-pipe { display:flex; gap:10px; margin-top:34px; flex-wrap:wrap; }
+  .end-pipe span { font-family:var(--mono); font-size:15px; letter-spacing:.11em; text-transform:uppercase; padding:8px 12px; border:1px solid rgba(23,63,56,.22); border-radius:100px; color:rgba(23,63,56,.64); background:rgba(255,255,255,.44); }
+  .end-pipe span.hot { color:var(--amber); border-color:rgba(180,83,9,.42); background:rgba(180,83,9,.07); }
+  .url-pill { display:inline-flex; align-items:center; gap:12px; margin-top:34px; padding:15px 22px; border:1.5px solid rgba(23,63,56,.30); border-radius:100px; font-family:var(--mono); font-size:23px; letter-spacing:.01em; color:var(--ink); background:rgba(255,255,255,.42); }
+  .url-pill .arrow { width:23px; height:23px; border-radius:50%; background:var(--ink); color:var(--paper); display:flex; align-items:center; justify-content:center; font-size:15px; }
+  .end-left .eval { margin-top:34px; font-family:var(--mono); font-size:16px; letter-spacing:.10em; text-transform:uppercase; color:rgba(23,63,56,.78); }
+  .end-left .eval b { color:var(--ink); font-weight:500; }
+  .end-stats { position:absolute; right:108px; top:210px; width:560px; z-index:3; }
+  .stat-row { display:flex; align-items:baseline; gap:24px; padding:18px 0; border-top:1px solid rgba(23,63,56,.18); }
+  .stat-row:last-child { border-bottom:1px solid rgba(23,63,56,.18); }
+  .stat-row .num { width:250px; font-size:88px; line-height:.82; letter-spacing:-.07em; font-weight:800; font-variant-numeric:tabular-nums; }
+  .stat-row .num.amber { color:var(--amber); }
+  .stat-row .lbl { font-size:20px; line-height:1.2; color:rgba(23,63,56,.68); }
+  .end-sweep { position:absolute; left:-320px; top:-240px; width:210px; height:1560px; z-index:4; opacity:0; transform:rotate(17deg); background:linear-gradient(90deg,transparent,rgba(255,255,255,.72),transparent); mix-blend-mode:soft-light; pointer-events:none; }
+  .end-caveat { position:absolute; left:108px; bottom:54px; font-family:var(--mono); font-size:15px; letter-spacing:.15em; text-transform:uppercase; color:rgba(23,63,56,.68); z-index:3; }
+  .end-caveat b { color:rgba(23,63,56,.62); font-weight:500; }
+  .end-version { position:absolute; right:108px; bottom:54px; font-family:var(--mono); font-size:14px; letter-spacing:.14em; text-transform:uppercase; color:rgba(23,63,56,.56); z-index:3; }
+</style>
+</head>
+<body>
+<div id="film" data-composition-id="film" data-width="1920" data-height="1080" data-duration="30" data-fps="60" data-om-signature="top-right">
+  <audio id="om-sound" src="assets/sound.wav" data-start="0" data-duration="30" data-track-index="8" data-volume="1"></audio>
+  <div class="grain"></div>
+  <div class="flash" id="flash"></div>
+
+  <!-- 1 · HOOK / REAL QUEUE -->
+  <section class="scene first" id="sc-queue" data-om-id="queue-scene" data-layout-allow-occlusion>
+    <div id="queuePlate">
+      <img src="materials/local-forge-agent-mcp/queue-close.png" alt="The real 16-case underwriting review queue with two pending approvals">
+      <div class="focus-row" id="focusRow" data-om-id="ridgeline-row"></div>
+      <div class="focus-label" id="focusLabel" data-om-id="ridgeline-label">Ridgeline Haulage · 5 documents · 45 fields · 0 flags</div>
+    </div>
+    <div class="queue-wash"></div>
+    <div class="queue-scan" id="queueScan"></div>
+    <div class="queue-type" data-om-id="hook-type">
+      <div class="eyebrow"><span class="dot"></span>Forge Agent + MCP / review console</div>
+      <h1><span class="line-mask"><span>16 cases.</span></span><span class="line-mask"><span class="amber">2 need a human.</span></span></h1>
+      <p>The agent can read all of it. <em>It cannot approve itself.</em></p>
+    </div>
+    <div class="queue-chips" id="queueChips" data-om-id="queue-chips">
+      <span class="chip hot">2 pending approval</span>
+      <span class="chip">16 cases · local demo tenant</span>
+      <span class="chip">Synthetic corpus · no real PII</span>
+    </div>
+    <div class="frame-mark"><b>01</b> &nbsp; Queue / the gateway's cases</div>
+  </section>
+
+  <!-- 2 · REAL RIDGELINE EVIDENCE -->
+  <section class="scene" id="sc-evidence" data-om-id="evidence-scene" data-layout-allow-occlusion>
+    <div class="plate ev-plate"><img src="materials/local-forge-agent-mcp/ridgeline-evidence.png" alt="Ridgeline Haulage review console showing extracted fields and the approve recommendation"></div>
+    <div class="ev-band"></div>
+    <div class="ev-head" data-om-id="evidence-head">
+      <div class="left"><div class="eyebrow">Ridgeline Haulage / onboarding</div><h2>45 fields. <em>Every one cited.</em></h2></div>
+      <div class="right">5 documents · 45 fields · 0 flags</div>
+    </div>
+    <div class="ev-scan" id="evScan"></div>
+    <div class="ev-bbox a" id="evBoxA"><span class="tag">BBOX · PAGE 1</span></div>
+    <div class="ev-bbox b" id="evBoxB"><span class="tag">SOURCE QUOTE</span></div>
+    <div class="ev-strip" data-om-id="evidence-strip">
+      <span class="k">Legal name</span><span class="v">Ridgeline Haulage LLC</span>
+      <span class="c">DOC-ONB-RIDGELINE-APP · Page 1 · bbox 189.0, 127.25, 293.82, 142.99</span>
+      <span class="c">“Ridgeline Haulage LLC”</span>
+    </div>
+    <div class="frame-mark"><b>02</b> &nbsp; Cited extraction / page + bbox + quote</div>
+  </section>
+
+  <!-- 3 · MACRO CITATION ROWS -->
+  <section class="scene" id="sc-macro" data-om-id="macro-scene" data-layout-allow-occlusion>
+    <div class="macro-bg"></div>
+    <div id="macroWorld">
+    <div class="macro-scan" id="macroScan"></div>
+    <div class="macro-head" data-om-id="macro-head">
+      <div><div class="eyebrow">The evidence, close up</div><h2>Every value<br><em>has a page.</em></h2></div>
+      <div class="meta"><b>45</b> fields · <b>5</b> documents<br><b>100%</b> cited · <b>0</b> invented values</div>
+    </div>
+    <div class="crow" data-om-id="cite-legal" data-layout-allow-occlusion>
+      <div class="field">Legal name<small>application · KYC</small></div>
+      <div class="value">Ridgeline Haulage LLC</div>
+      <div class="conf"><span>100%</span></div>
+      <div class="cite">DOC-ONB-RIDGELINE-APP · Page 1 <span class="bbox">bbox 189.0, 127.25, 293.82, 142.99</span></div>
+      <div class="quote">“Ridgeline Haulage LLC”</div>
+    </div>
+    <div class="crow" data-om-id="cite-mc" data-layout-allow-occlusion>
+      <div class="field">MC number<small>application · KYC</small></div>
+      <div class="value">MC-000101</div>
+      <div class="conf"><span>100%</span></div>
+      <div class="cite">DOC-ONB-RIDGELINE-APP · Page 1 <span class="bbox">bbox 189.0, 190.25, 243.24, 205.99</span></div>
+      <div class="quote">“MC-000101”</div>
+    </div>
+    <div class="crow" data-om-id="cite-ein" data-layout-allow-occlusion>
+      <div class="field">EIN<small>application · KYC</small></div>
+      <div class="value">00-0000101</div>
+      <div class="conf"><span>100%</span></div>
+      <div class="cite">DOC-ONB-RIDGELINE-APP · Page 1 <span class="bbox">bbox 189.0, 169.25, 244.37, 184.99</span></div>
+      <div class="quote">“00-0000101”</div>
+    </div>
+    <div class="macro-foot"><div class="big">No invented <em>values.</em></div><div class="small">Synthetic corpus · verbatim quotes</div></div>
+    <div class="frame-mark"><b>03</b> &nbsp; Evidence / 45 receipts</div>
+    </div>
+  </section>
+
+  <!-- 4 · THE GATE -->
+  <section class="scene" id="sc-gate" data-om-id="gate-scene" data-layout-allow-occlusion>
+    <div class="gate-bg"></div>
+    <div id="gateWorld">
+    <div class="gate-copy" data-om-id="gate-copy">
+      <div class="eyebrow"><span class="dot"></span>The last inch</div>
+      <h2><span id="gateLine1" class="fade">It can recommend.</span><br><span id="gateLine2">It cannot <em>approve itself.</em></span></h2>
+      <div class="gate-rule" id="gateRule"></div>
+      <p>A clean packet still needs a human. <b>A human decision mints the token.</b> The agent never holds the key.</p>
+    </div>
+
+    <div class="rec-ticket" id="recTicket" data-om-id="recommendation-ticket">
+      <div class="head"><span class="t">Recommendation</span><span class="pill">approve</span></div>
+      <div class="sub">Deterministic rule engine · the human decides</div>
+      <div class="verdict">
+        <div class="check"><svg viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6.5"/></svg></div>
+        <div><div class="a">Approve</div><div class="b">Decision: approve · 0 flag(s)</div></div>
+      </div>
+      <div class="body">No rule flags were found; the packet is clean.</div>
+      <div class="note">case_onb_ridgeline: approve (decision approve). No rule flags were found; the packet is clean.</div>
+      <div class="footer"><span class="chip">45 fields</span><span class="chip">5 documents</span><span class="chip">0 flags</span></div>
+    </div>
+
+    <div class="gate-bar" id="gateBar" data-om-id="approval-gate">
+      <div class="cap">HUMAN APPROVAL</div><div class="bar"></div><div class="cap2">TOKEN REQUIRED</div>
+    </div>
+
+    <div class="decision-panel" id="decisionPanel" data-om-id="decision-panel">
+      <div class="head"><span class="t">Reviewer decision</span><span class="n">4 actions</span></div>
+      <div class="sub">Recommended: approve · token minted only after this action</div>
+      <div class="human-bar" id="humanBar"><span class="dot"></span>HUMAN DECISION</div>
+      <div class="options">
+        <div class="opt recommended selected" id="optApprove"><span class="radio"></span>Approve</div>
+        <div class="opt recommended disabled" id="optConditional"><span class="radio"></span>Conditional approve</div>
+        <div class="opt disabled"><span class="radio"></span>Decline</div>
+        <div class="opt disabled"><span class="radio"></span>Request documents</div>
+      </div>
+      <div class="field-label"><span>Conditions</span><span>one per line</span></div>
+      <div class="fake-input">Required for a conditional approval; optional for a document request.</div>
+      <div class="field-label"><span>Reviewer identity</span><span>goes into the rationale</span></div>
+      <div class="identity">underwriter@example.test</div>
+      <div class="resume" id="resumeBtn"><span class="plane"><svg viewBox="0 0 24 24"><path d="M3 11l18-7-7 18-2.5-7.5L3 11z"/></svg></span>Record decision and resume</div>
+      <div class="helper">Mints a single-use HMAC approval token plus a short-lived freight:approve token. Resumes the graph, writes once and verifies the audit chain.</div>
+    </div>
+
+    <div class="token-chip" id="tokenChip">freight:approve · <b>idem_9a10…</b></div>
+    <div class="gate-stamp" id="gateStamp"><svg viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6.5"/></svg>token<br>minted</div>
+    <div class="click-ring" id="clickRing"></div>
+    <div class="cursor" id="cursor"><svg viewBox="0 0 34 48"><path d="M3 3 L3 38 L12 29 L19 44 L26 40 L19 26 L31 26 Z" fill="#f7f3e9" stroke="#142235" stroke-width="2.4"/></svg></div>
+    <div class="frame-mark"><b>04</b> &nbsp; The gate / the agent cannot sign</div>
+    </div>
+  </section>
+
+  <!-- 5 · COMMITTED -->
+  <section class="scene" id="sc-commit" data-om-id="commit-scene" data-layout-allow-occlusion>
+    <div class="plate commit-plate"><img src="materials/local-forge-agent-mcp/ridgeline-committed.png" alt="The committed decision panel showing one transaction, approved, and audit verified"></div>
+    <div class="commit-left"></div>
+    <div class="commit-scan" id="commitScan"></div>
+    <div class="commit-copy" data-om-id="commit-copy">
+      <div class="eyebrow"><span class="dot"></span>The write</div>
+      <h2>One<br>transaction.</h2>
+      <p>Decision, CRM stage, idempotency row and audit event commit once through the MCP gateway.</p>
+    </div>
+    <div class="commit-ring" id="commitRing"><span class="tag">COMMITTED · AUDIT VERIFIED</span></div>
+    <div class="commit-stamp" id="commitStamp"><svg viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6.5"/></svg>committed<br>once</div>
+    <div class="commit-strip" data-om-id="commit-strip">
+      <span class="k">decision</span><span class="v">dec_9aa10f8555a6</span>
+      <span class="k">approver</span><span class="v">underwriter@example.test</span>
+      <span class="k">crm</span><span class="v">approved</span>
+      <span class="k">audit</span><span class="v">verified</span>
+    </div>
+    <div class="frame-mark"><b>05</b> &nbsp; Committed decision / one transaction</div>
+  </section>
+
+  <!-- 6 · AUDIT -->
+  <section class="scene" id="sc-audit" data-om-id="audit-scene" data-layout-allow-occlusion>
+    <div class="plate audit-plate"><img src="materials/local-forge-agent-mcp/audit-chain.png" alt="The append-only audit trail listing gateway events and the write_committed decision"></div>
+    <div class="audit-left"></div>
+    <div class="audit-scan" id="auditScan"></div>
+    <div class="audit-copy" data-om-id="audit-copy">
+      <div class="eyebrow"><span class="dot"></span>Audited write</div>
+      <h2>Every write<br>has a<br>principal.</h2>
+      <p>Append-only gateway events. <b>Chain verified.</b></p>
+    </div>
+    <div class="audit-pulse" id="auditPulse"></div>
+    <div class="audit-ring" id="auditRing"><span class="tag">WRITE_COMMITTED · ROW 40</span></div>
+    <div class="write-card" id="writeCard" data-om-id="write-receipt">
+      <div class="head"><span class="t">create_decision · write_committed</span><span class="s">chain verified</span></div>
+      <div class="write-grid">
+        <div>approver <b>underwriter@example.test</b></div>
+        <div>case_status <b>approved</b></div>
+        <div>crm_stage <b>approved</b></div>
+        <div>decision <b>approve</b></div>
+        <div>decision_id <b>dec_9aa10f8555a6</b></div>
+        <div>idempotency_key <b>idem_91a5b6ed…</b></div>
+        <div>payload_hash <b>91a5b6ed…</b></div>
+        <div>outcome <b>ok</b></div>
+      </div>
+      <div class="write-foot"><span class="chip">same key → same result</span><span class="chip">changed payload → refused</span><span class="chip hot">0 bypasses</span></div>
+    </div>
+    <div class="frame-mark"><b>06</b> &nbsp; Audit / replay-safe</div>
+  </section>
+
+  <!-- 7 · PROOF BURST -->
+  <section class="scene" id="sc-burst" data-om-id="burst-scene" data-layout-allow-occlusion>
+    <div class="burst-shot" id="burst1">
+      <div class="plate"><img src="materials/local-forge-agent-mcp/queue-close.png" alt="The review queue"></div>
+      <div class="burst-wash"></div>
+      <div class="burst-stat"><div class="k">Hard-stop recall</div><div class="n">100<em>%</em></div><div class="l">Every hard stop is caught.</div><div class="src">Real queue · synthetic corpus</div></div>
+      <div class="burst-line"></div>
+    </div>
+    <div class="burst-shot" id="burst2">
+      <div class="plate"><img src="materials/local-forge-agent-mcp/ridgeline-evidence.png" alt="Cited extraction"></div>
+      <div class="burst-wash"></div>
+      <div class="burst-stat"><div class="k">Duplicate writes</div><div class="n">0</div><div class="l">The idempotency key holds.</div><div class="src">Committed through the MCP gateway</div></div>
+      <div class="burst-line"></div>
+    </div>
+    <div class="burst-shot" id="burst3">
+      <div class="plate"><img src="materials/local-forge-agent-mcp/ridgeline-committed.png" alt="Committed decision"></div>
+      <div class="burst-wash"></div>
+      <div class="burst-stat"><div class="k">Approval bypasses</div><div class="n">0</div><div class="l">No token, no write.</div><div class="src">Single-use HMAC approval token</div></div>
+      <div class="burst-line"></div>
+    </div>
+    <div class="burst-shot" id="burst4">
+      <div class="plate"><img src="materials/local-forge-agent-mcp/audit-chain.png" alt="Audit chain"></div>
+      <div class="burst-wash"></div>
+      <div class="burst-stat"><div class="k">Audit completeness</div><div class="n">100<em>%</em></div><div class="l">Every event has a principal.</div><div class="src">Append-only gateway events</div></div>
+      <div class="burst-line"></div>
+    </div>
+    <div class="last-inch" id="lastInch">
+      <div class="copy"><div class="k">The last inch</div><h2>The last inch<br>is <em>human.</em></h2></div>
+      <div class="gate-hair"></div>
+    </div>
+  </section>
+
+  <!-- 8 · END CARD -->
+  <section class="scene" id="sc-end" data-om-id="end-scene" data-layout-allow-occlusion>
+    <div class="end-bg"></div>
+    <div class="end-sweep" id="endSweep"></div>
+    <div id="endWorld">
+    <div class="end-left">
+      <div class="eyebrow"><span class="dot"></span>Forge Agent + MCP</div>
+      <h1 id="end-headline" data-om-id="end-headline" data-var-text="headline" data-om-var="headline">A freight underwriting agent that cannot approve itself.</h1>
+      <div class="end-rule" id="endRule"></div>
+      <div class="end-sub">Typed MCP tools, a deterministic rule engine and a human approval gate, with a replay-safe audit trail.</div>
+      <div class="end-pipe" id="endPipe">
+        <span>Packet</span><span>Cited extraction</span><span>Rule engine</span><span class="hot">Human approval</span><span>Audited write</span>
+      </div>
+      <div class="url-pill" data-om-id="url-pill"><span data-var-text="url">github.com/ArpanSM/forge-agent-mcp</span><span class="arrow">↗</span></div>
+      <div class="eval"><b>12 evaluation cases</b> · 4 held out · six hard gates</div>
+    </div>
+    <div class="end-stats" id="endStats">
+      <div class="stat-row"><div class="num" data-om-id="stat1" data-var-text="stat1">100%</div><div class="lbl" data-var-text="stat1Label">hard-stop recall</div></div>
+      <div class="stat-row"><div class="num amber" data-om-id="stat2" data-var-text="stat2">0</div><div class="lbl" data-var-text="stat2Label">duplicate writes</div></div>
+      <div class="stat-row"><div class="num amber" data-om-id="stat3" data-var-text="stat3">0</div><div class="lbl" data-var-text="stat3Label">approval bypasses</div></div>
+      <div class="stat-row"><div class="num" data-om-id="stat4" data-var-text="stat4">100%</div><div class="lbl" data-var-text="stat4Label">audit completeness</div></div>
+    </div>
+    <div class="end-caveat" data-om-id="caveat" data-var-text="caveat"><b>Synthetic corpus</b> · local demo · not production</div>
+    <div class="end-version">30s · 1920×1080 · 120 BPM</div>
+    </div>
+  </section>
+</div>
+
+<script>
+  window.__timelines = window.__timelines || {};
+  const V = OM.vars();
+  const $ = (s) => document.querySelector(s);
+  const el = (s) => document.querySelectorAll(s);
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  const B = (n) => n * 0.5; // 120 BPM, one beat = 0.5 s
+
+  // Initial states. The poster is complete at t=0: type is already set, the queue is real.
+  gsap.set('.scene', { autoAlpha: 0 });
+  gsap.set('#sc-queue', { autoAlpha: 1 });
+  gsap.set('#focusRow, #focusLabel', { autoAlpha: 0 });
+  gsap.set('.ev-scan, .ev-bbox, .ev-strip', { autoAlpha: 0 });
+  gsap.set('.crow', { autoAlpha: 0, y: 26 });
+  gsap.set('#recTicket, #decisionPanel', { autoAlpha: 0 });
+  gsap.set('#gateBar', { y: -980 });
+  gsap.set('#cursor, #tokenChip, #clickRing, #humanBar, #gateStamp, #commitStamp, #auditPulse, #endSweep', { autoAlpha: 0 });
+  gsap.set('#commitRing, #auditRing, #writeCard', { autoAlpha: 0 });
+  gsap.set('.burst-shot, #lastInch', { autoAlpha: 0 });
+  gsap.set('#sc-end .end-left > *, #endStats .stat-row', { autoAlpha: 0 });
+  gsap.set('#selectedApprove', { autoAlpha: 0 });
+
+  tl.addLabel('scene:hook', 0)
+    .addLabel('scene:queue', 2.0)
+    .addLabel('scene:evidence', 4.0)
+    .addLabel('scene:cite', 5.5)
+    .addLabel('scene:recommend', 8.0)
+    .addLabel('scene:gate', 10.0)
+    .addLabel('scene:stop', 12.0)
+    .addLabel('scene:cursor', 13.5)
+    .addLabel('scene:human', 14.0)
+    .addLabel('scene:write', 16.0)
+    .addLabel('scene:audit', 18.0)
+    .addLabel('scene:burst', 21.0)
+    .addLabel('scene:end', 24.0);
+
+  // ---------- 0–4 · HOOK / QUEUE ----------
+  tl.fromTo('#queuePlate', { scale: 1.18, x: -12, y: 8 }, { scale: 1.04, x: 0, y: 0, duration: .55, ease: 'expo.out' }, 0)
+    .to('#queuePlate', { scale: 1.085, duration: .8, ease: 'none' }, .55)
+    .to('#queuePlate', { scale: 1.55, duration: .25, ease: 'power3.in' }, 1.35)
+    .to('#queuePlate', { scale: 1.17, duration: .5, ease: 'power2.out' }, 1.6)
+    .fromTo('.queue-type h1 .line-mask > span', { yPercent: 0 }, { yPercent: 0, duration: .01 }, 0)
+    .fromTo('#queueType', { x: 0, y: 0 }, { x: -16, y: -10, duration: 2.0, ease: 'none' }, 0)
+    .fromTo('#queueType h1', { scale: 1.0, transformOrigin: '0% 50%' }, { scale: 1.045, duration: .22, ease: 'power2.out' }, .52)
+    .to('#queueType h1', { scale: 1.0, duration: .38, ease: 'power2.inOut' }, .74)
+    .fromTo('#queueScan', { autoAlpha: 0, y: 0 }, { autoAlpha: 1, duration: .15 }, .62)
+    .to('#queueScan', { y: 620, duration: 1.18, ease: 'power1.inOut' }, .72)
+    .to('#queueScan', { autoAlpha: 0, duration: .2 }, 1.9)
+    .fromTo('#queueScan', { autoAlpha: 0, y: 0 }, { autoAlpha: 1, duration: .15 }, 2.25)
+    .to('#queueScan', { y: 720, duration: 1.55, ease: 'power1.inOut' }, 2.35)
+    .to('#queueScan', { autoAlpha: 0, duration: .2 }, 3.82)
+    .to('#focusRow', { scaleX: 1.02, duration: .3, yoyo: true, repeat: 4, ease: 'sine.inOut', transformOrigin: '0 50%' }, 2.2)
+    .fromTo('#pendingRing, #queueChips .chip.hot', { scale: 1 }, { scale: 1.035, duration: .22, yoyo: true, repeat: 3, ease: 'power2.inOut' }, .45)
+    .fromTo('.queue-type p', { autoAlpha: 0, y: 18 }, { autoAlpha: 1, y: 0, duration: .7 }, 1.0)
+    .fromTo('#focusRow', { autoAlpha: 0, scaleX: .86, transformOrigin: '0 50%' }, { autoAlpha: 1, scaleX: 1, duration: .5, ease: 'expo.out' }, 2.0)
+    .fromTo('#focusLabel', { autoAlpha: 0, x: -16 }, { autoAlpha: 1, x: 0, duration: .5 }, 2.15)
+    .to('#queuePlate', { scale: 1.40, x: -26, y: 14, transformOrigin: '40% 15%', duration: 2.0, ease: 'power2.inOut' }, 2.0)
+    .to('#queueType', { autoAlpha: 0, x: -40, duration: .55, ease: 'power2.in' }, 2.85)
+    .to('#queueChips', { autoAlpha: 0, y: 16, duration: .4, ease: 'power2.in' }, 2.9)
+    .to('#focusLabel', { autoAlpha: 0, duration: .35 }, 3.35);
+
+  // cut to real evidence
+  tl.set('#sc-queue', { autoAlpha: 0 }, 4.0)
+    .set('#sc-evidence', { autoAlpha: 1 }, 4.0)
+    ;
+
+  // ---------- 4–5.5 · REAL EVIDENCE ----------
+  tl.fromTo('#sc-evidence .ev-plate', { scale: 1.11, x: -10 }, { scale: 1.0, x: 0, duration: 1.5, ease: 'expo.out' }, 4.0)
+    .fromTo('.ev-head .left', { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: .55 }, 4.05)
+    .fromTo('.ev-head .right', { autoAlpha: 0, x: 20 }, { autoAlpha: 1, x: 0, duration: .55 }, 4.18)
+    .fromTo('#evScan', { autoAlpha: 0 }, { autoAlpha: 1, duration: .15 }, 4.35)
+    .to('#evScan', { y: 710, duration: 1.05, ease: 'power1.inOut' }, 4.4)
+    .to('#evScan', { autoAlpha: 0, duration: .15 }, 5.45)
+    .fromTo('#evBoxA', { autoAlpha: 0, scale: 1.05 }, { autoAlpha: 1, scale: 1, duration: .25 }, 4.6)
+    .fromTo('#evBoxB', { autoAlpha: 0, scale: 1.05 }, { autoAlpha: 1, scale: 1, duration: .25 }, 5.0)
+    .fromTo('.ev-strip', { autoAlpha: 0, y: 26 }, { autoAlpha: 1, y: 0, duration: .55 }, 4.25);
+
+  // cut to macro citation
+  tl.set('#sc-evidence', { autoAlpha: 0 }, 5.5)
+    .set('#sc-macro', { autoAlpha: 1 }, 5.5);
+
+  // ---------- 5.5–8 · MACRO CITATION ----------
+  tl.fromTo('#macroWorld', { scale: 1.0 }, { scale: 1.035, duration: 2.45, ease: 'none' }, 5.5)
+    .fromTo('#macroScan', { autoAlpha: 0, y: 0 }, { autoAlpha: 1, duration: .15 }, 6.1)
+    .to('#macroScan', { y: 430, duration: 1.4, ease: 'power1.inOut' }, 6.2)
+    .to('#macroScan', { autoAlpha: 0, duration: .2 }, 7.55)
+    .fromTo('.macro-head .left', { autoAlpha: 0, y: 22 }, { autoAlpha: 1, y: 0, duration: .5 }, 5.55)
+    .fromTo('.macro-head .meta', { autoAlpha: 0, x: 20 }, { autoAlpha: 1, x: 0, duration: .5 }, 5.65)
+    .fromTo('#sc-macro .crow', { autoAlpha: 0, y: 26 }, { autoAlpha: 1, y: 0, duration: .5, stagger: .35, ease: 'expo.out' }, 5.65)
+    .fromTo('.macro-foot', { autoAlpha: 0, y: 22 }, { autoAlpha: 1, y: 0, duration: .5 }, 7.2)
+    .to('.macro-head, .crow, .macro-foot', { autoAlpha: 0, duration: .35, ease: 'power2.in' }, 7.55);
+
+  // cut to gate
+  tl.set('#sc-macro', { autoAlpha: 0 }, 8.0)
+    .set('#sc-gate', { autoAlpha: 1 }, 8.0);
+
+  // ---------- 8–12 · THE GATE ----------
+  tl.fromTo('#gateWorld', { scale: 1.0, x: 0 }, { scale: 1.055, x: -8, duration: 5.0, ease: 'none' }, 8.0)
+    .to('#gateWorld', { scale: 1.075, x: -10, duration: 1.0, ease: 'none' }, 13.0)
+    .fromTo('.gate-copy .eyebrow', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: .45 }, 8.05)
+    .fromTo('#gateLine1', { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: .6, ease: 'expo.out' }, 8.15)
+    .fromTo('#recTicket', { autoAlpha: 0, x: -40, scale: .98 }, { autoAlpha: 1, x: 0, scale: 1, duration: .7, ease: 'expo.out' }, 8.1)
+    .fromTo('#decisionPanel', { autoAlpha: 0, x: 40, scale: .98 }, { autoAlpha: 1, x: 0, scale: 1, duration: .7, ease: 'expo.out' }, 8.2)
+    .fromTo('#gateRule', { scaleX: 0 }, { scaleX: 1, duration: .55, ease: 'expo.inOut' }, 8.55)
+    .fromTo('.gate-copy p', { autoAlpha: 0, y: 18 }, { autoAlpha: 1, y: 0, duration: .55 }, 8.35)
+    .to('#recTicket', { x: 38, duration: .65, ease: 'power2.inOut' }, 9.35)
+    .to('#gateBar', { y: 0, duration: .28, ease: 'expo.in' }, 9.98)
+    .to('#gateLine1', { color: 'rgba(23,63,56,.62)', duration: .3 }, 10.0)
+    .fromTo('#gateLine2', { autoAlpha: 0, y: 34, scale: 1.04 }, { autoAlpha: 1, y: 0, scale: 1, duration: .45, ease: 'expo.out' }, 10.0)
+    .to('#recTicket', { x: 0, duration: .4, ease: 'back.out(1.1)' }, 10.0)
+    .fromTo('#gateBar .bar', { scaleX: 1 }, { scaleX: 1.18, duration: .18, yoyo: true, repeat: 1, ease: 'power2.inOut' }, 10.05)
+    .to('#gateLine2', { scale: 1.018, duration: .5, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 10.55)
+    .to('#gateBar .bar', { scaleX: 1.22, duration: .18, yoyo: true, repeat: 5, ease: 'sine.inOut' }, 10.6)
+    .to('#decisionPanel', { boxShadow: '0 0 0 9px rgba(180,83,9,.16)', duration: .34, yoyo: true, repeat: 3 }, 10.85)
+    .to('#gateBar .bar', { scaleX: 1.14, duration: .22, yoyo: true, repeat: 6, ease: 'sine.inOut' }, 12.3)
+    .to('.gate-copy p', { autoAlpha: .55, duration: .4 }, 10.35);
+
+  // STOP: 12.0–14.0 — everything holds except a breath of drift
+  tl.to('#recTicket', { y: -4, duration: 2.0, ease: 'sine.inOut' }, 12.0)
+    .to('#decisionPanel', { y: 3, duration: 2.0, ease: 'sine.inOut' }, 12.0)
+    .fromTo('#gateBar .bar', { opacity: 1 }, { opacity: .78, duration: 1.8, ease: 'sine.inOut' }, 12.0);
+
+  // human cursor enters at 13.2
+  tl.set('#cursor', { autoAlpha: 1, x: 1570, y: 985, scale: 1 }, 12.7)
+    .to('#cursor', { x: 1362, y: 330, duration: 1.26, ease: 'power3.inOut' }, 12.78)
+    .to('#cursor', { x: 1368, y: 336, duration: .12, ease: 'power2.inOut' }, 13.98)
+    .to('#cursor', { scale: .84, duration: .08, ease: 'power2.in' }, 14.0)
+    .to('#cursor', { scale: 1, duration: .18, ease: 'back.out(2)' }, 14.08)
+    .set('#clickRing', { x: 1349, y: 311 }, 13.99)
+    .fromTo('#clickRing', { autoAlpha: 1, scale: .4 }, { autoAlpha: 0, scale: 2.2, duration: .5, ease: 'expo.out', immediateRender: false }, 14.0)
+    .fromTo('#humanBar', { autoAlpha: 0, y: 8 }, { autoAlpha: 1, y: 0, duration: .3 }, 14.06)
+    .fromTo('#resumeBtn', { opacity: .42, scale: 1 }, { opacity: 1, scale: 1.02, duration: .25, ease: 'back.out(1.5)' }, 14.08)
+    .to('#resumeBtn', { scale: 1, duration: .2 }, 14.36)
+    .to('#gateBar', { y: -980, duration: .38, ease: 'expo.in' }, 14.08)
+    .fromTo('#tokenChip', { autoAlpha: 0, x: -100, y: 0, scale: .94 }, { autoAlpha: 1, x: 0, y: 0, scale: 1, duration: .3, ease: 'back.out(1.6)' }, 14.25)
+    .to('#tokenChip', { x: 430, y: 112, duration: .55, ease: 'power2.inOut' }, 14.55)
+    .to('#tokenChip', { autoAlpha: 0, scale: .96, duration: .18 }, 15.30)
+    .to('#cursor', { x: 1502, y: 650, duration: .58, ease: 'power3.inOut' }, 14.62)
+    .to('#cursor', { scale: .84, duration: .07 }, 15.18)
+    .to('#cursor', { scale: 1, duration: .15, ease: 'back.out(2)' }, 15.25)
+    .set('#clickRing', { x: 1483, y: 631 }, 15.17)
+    .fromTo('#clickRing', { autoAlpha: 1, scale: .4 }, { autoAlpha: 0, scale: 2.0, duration: .45, ease: 'expo.out', immediateRender: false }, 15.18)
+    .fromTo('#resumeBtn', { boxShadow: '0 0 0 0 rgba(47,125,99,0)' }, { boxShadow: '0 0 0 9px rgba(47,125,99,.18)', duration: .25, yoyo: true, repeat: 1 }, 15.18)
+    .to('#humanBar .dot', { scale: 1.7, duration: .28, yoyo: true, repeat: 3, ease: 'sine.inOut' }, 14.3)
+    .fromTo('#gateStamp', { autoAlpha: 0, scale: 1.5, rotation: -8 }, { autoAlpha: 1, scale: 1, rotation: 0, duration: .38, ease: 'back.out(1.8)' }, 15.38)
+    .to('#gateStamp', { autoAlpha: 0, scale: .96, duration: .28 }, 15.82)
+    .to('#cursor', { autoAlpha: 0, duration: .3 }, 15.55);
+
+  // cut to committed
+  tl.set('#sc-gate', { autoAlpha: 0 }, 16.0)
+    .set('#sc-commit', { autoAlpha: 1 }, 16.0)
+    ;
+
+  // ---------- 16–18 · COMMITTED ----------
+  tl.fromTo('#sc-commit .commit-plate', { scale: 1.075, x: -8 }, { scale: 1.0, x: 0, duration: 2.0, ease: 'expo.out' }, 16.0)
+    .fromTo('.commit-copy .eyebrow', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: .4 }, 16.05)
+    .fromTo('.commit-copy h2', { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: .55, ease: 'expo.out' }, 16.1)
+    .fromTo('.commit-copy p', { autoAlpha: 0, y: 18 }, { autoAlpha: 1, y: 0, duration: .5 }, 16.3)
+    .fromTo('#commitScan', { autoAlpha: 0, y: 0 }, { autoAlpha: 1, duration: .15 }, 16.55)
+    .to('#commitScan', { y: 360, duration: 1.25, ease: 'power1.inOut' }, 16.65)
+    .to('#commitScan', { autoAlpha: 0, duration: .2 }, 17.9)
+    .fromTo('#commitRing', { autoAlpha: 0, scale: 1.03 }, { autoAlpha: 1, scale: 1, duration: .55, ease: 'expo.out' }, 16.45)
+    .to('#commitRing', { scale: 1.008, duration: .55, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 17.05)
+    .fromTo('.commit-strip', { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: .55 }, 16.55);
+
+  // cut to audit
+  tl.set('#sc-commit', { autoAlpha: 0 }, 18.0)
+    .set('#sc-audit', { autoAlpha: 1 }, 18.0);
+
+  // ---------- 18–21 · AUDIT ----------
+  tl.fromTo('#sc-audit .audit-plate', { scale: 1.075, x: -8 }, { scale: 1.0, x: 0, duration: 2.4, ease: 'expo.out' }, 18.0)
+    .fromTo('.audit-copy .eyebrow', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: .4 }, 18.05)
+    .fromTo('.audit-copy h2', { autoAlpha: 0, y: 28 }, { autoAlpha: 1, y: 0, duration: .55, ease: 'expo.out' }, 18.1)
+    .fromTo('.audit-copy p', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: .45 }, 18.3)
+    .fromTo('#auditScan', { autoAlpha: 0, y: 0 }, { autoAlpha: 1, duration: .15 }, 18.45)
+    .to('#auditScan', { y: 520, duration: 1.5, ease: 'power1.inOut' }, 18.55)
+    .to('#auditScan', { autoAlpha: 0, duration: .2 }, 20.1)
+    .fromTo('#auditPulse', { autoAlpha: 0, y: 0 }, { autoAlpha: 1, duration: .2 }, 19.2)
+    .to('#auditPulse', { y: 470, duration: 1.35, ease: 'power1.inOut' }, 19.3)
+    .to('#auditPulse', { autoAlpha: 0, duration: .25 }, 20.55)
+    .fromTo('#commitStamp', { autoAlpha: 0, scale: 1.5, rotation: -8 }, { autoAlpha: 1, scale: 1, rotation: 0, duration: .38, ease: 'back.out(1.8)' }, 16.9)
+    .to('#commitStamp', { autoAlpha: 0, scale: .96, duration: .3 }, 17.55)
+    .fromTo('#auditRing', { autoAlpha: 0, scaleX: .94, transformOrigin: '0 50%' }, { autoAlpha: 1, scaleX: 1, duration: .5, ease: 'expo.out' }, 18.55)
+    .fromTo('#writeCard', { autoAlpha: 0, y: 32 }, { autoAlpha: 1, y: 0, duration: .55, ease: 'expo.out' }, 18.95)
+    .fromTo('#writeCard .write-grid div', { autoAlpha: 0, y: 8 }, { autoAlpha: 1, y: 0, duration: .3, stagger: .035 }, 19.1)
+    .fromTo('#writeCard .write-foot', { autoAlpha: 0, y: 8 }, { autoAlpha: 1, y: 0, duration: .3 }, 19.45)
+    .to('#auditRing', { scale: 1.006, duration: .5, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 19.7);
+
+  // cut to burst
+  tl.set('#sc-audit', { autoAlpha: 0 }, 21.0)
+    .set('#sc-burst', { autoAlpha: 1 }, 21.0);
+
+  // ---------- 21–24 · PROOF BURST ----------
+  const burst = ['#burst1', '#burst2', '#burst3', '#burst4'];
+  burst.forEach((id, i) => {
+    const t = 21.0 + i * 0.5;
+    tl.set(id, { autoAlpha: 1 }, t)
+      .fromTo(id + ' .plate', { scale: 1.06 }, { scale: 1.0, duration: .5, ease: 'none' }, t)
+      .fromTo(id + ' .burst-stat', { autoAlpha: 0, x: -24 }, { autoAlpha: 1, x: 0, duration: .26, ease: 'expo.out' }, t + .02);
+    if (i < 3) tl.set(id, { autoAlpha: 0 }, 21.0 + (i + 1) * 0.5);
+  });
+  tl.set('#burst4', { autoAlpha: 0 }, 23.0)
+    .set('#lastInch', { autoAlpha: 1 }, 23.0)
+    .fromTo('#lastInch .copy .k', { autoAlpha: 0, y: 18 }, { autoAlpha: 1, y: 0, duration: .3 }, 23.04)
+    .fromTo('#lastInch h2', { autoAlpha: 0, y: 36, scale: 1.03 }, { autoAlpha: 1, y: 0, scale: 1, duration: .42, ease: 'expo.out' }, 23.08)
+    .fromTo('#lastInch .gate-hair', { scaleY: 0, transformOrigin: '50% 0%' }, { scaleY: 1, duration: .45, ease: 'expo.in' }, 23.02)
+    .to('#lastInch h2', { scale: 1.015, duration: .45, ease: 'power2.in' }, 23.55);
+
+  // cut to end card
+  tl.set('#sc-burst', { autoAlpha: 0 }, 24.0)
+    .set('#sc-end', { autoAlpha: 1 }, 24.0)
+    ;
+
+  // ---------- 24–30 · END ----------
+  tl.fromTo('#sc-end .end-bg', { scale: 1.02 }, { scale: 1.0, duration: 6.0, ease: 'none' }, 24.0)
+    .fromTo('#endWorld', { scale: 1.0 }, { scale: 1.05, duration: 6.0, ease: 'none' }, 24.0)
+    .fromTo('#endSweep', { autoAlpha: 0, x: -200 }, { autoAlpha: .55, duration: .15 }, 24.7)
+    .to('#endSweep', { x: 2150, duration: 1.15, ease: 'power1.inOut' }, 24.75)
+    .to('#endSweep', { autoAlpha: 0, duration: .2 }, 25.9)
+    .fromTo('#endSweep', { autoAlpha: .55, x: -200 }, { autoAlpha: .55, duration: .15 }, 27.6)
+    .to('#endSweep', { x: 2150, duration: 1.15, ease: 'power1.inOut' }, 27.65)
+    .to('#endSweep', { autoAlpha: 0, duration: .2 }, 28.8)
+    .fromTo('#sc-end .end-left .eyebrow', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: .5 }, 24.1)
+    .fromTo('#end-headline', { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: .7, ease: 'expo.out' }, 24.25)
+    .fromTo('#endRule', { scaleX: 0, autoAlpha: 0 }, { scaleX: 1, autoAlpha: 1, duration: .7, ease: 'expo.inOut' }, 24.8)
+    .fromTo('.end-sub', { autoAlpha: 0, y: 18 }, { autoAlpha: 1, y: 0, duration: .6 }, 25.0)
+    .fromTo('#endPipe', { autoAlpha: 0 }, { autoAlpha: 1, duration: .01 }, 25.24)
+    .fromTo('#endPipe span', { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: .35, stagger: .06 }, 25.25)
+    .fromTo('#endStats .stat-row', { autoAlpha: 0, x: 28 }, { autoAlpha: 1, x: 0, duration: .5, stagger: .12, ease: 'expo.out' }, 25.45)
+    .fromTo('.url-pill', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: .5 }, 26.2)
+    .fromTo('.end-left .eval', { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: .4 }, 26.55)
+    .fromTo('.end-caveat', { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: .4 }, 26.85)
+    .fromTo('.end-version', { autoAlpha: 0 }, { autoAlpha: 1, duration: .4 }, 27.0)
+    .to({}, { duration: 3.0 }, 27.0);
+
+
+  // Sound effects: landings are marked where the motion lands, not where the tween starts.
+  OM.sfx('impact', 0.0, { gain: .55 });
+  OM.sfx('whoosh', 2.0, { gain: .30 });
+  OM.sfx('impact', 4.0, { gain: .55 });
+  OM.sfx('click', 5.5, { gain: .35 });
+  OM.sfx('pop', 5.65, { gain: .38, note: 1 });
+  OM.sfx('pop', 6.35, { gain: .34, note: 3 });
+  OM.sfx('hit', 7.2, { gain: .36 });
+  OM.sfx('impact', 8.0, { gain: .55 });
+  OM.sfx('chime', 8.5, { gain: .34, note: 5 });
+  OM.sfx('thud', 10.0, { gain: .62 });
+  OM.sfx('reverse', 14.0, { gain: .40, dur: 1.6 });
+  OM.sfx('tick', 13.5, { gain: .30 });
+  OM.sfx('click', 14.25, { gain: .30 });
+  OM.sfx('whoosh', 14.55, { gain: .26 });
+  OM.sfx('thud', 15.18, { gain: .48 });
+  OM.sfx('hit', 16.0, { gain: .42 });
+  OM.sfx('impact', 18.0, { gain: .50 });
+  OM.sfx('ding', 19.7, { gain: .34, note: 6 });
+  OM.sfx('hit', 21.0, { gain: .40, pitch: .98 });
+  OM.sfx('hit', 22.5, { gain: .42, pitch: 1.10 });
+  OM.sfx('impact', 23.0, { gain: .52 });
+  OM.sfx('riser', 24.0, { gain: .34, dur: .9 });
+  OM.sfx('impact', 24.0, { gain: .48 });
+  OM.sfx('chime', 26.2, { gain: .26, note: 5 });
+
+  window.__timelines['film'] = tl;
+</script>
+
+<script type="text/vnd.abc" id="om-score">
+X:1
+T:Forge Agent + MCP · The Gate
+M:4/4
+L:1/8
+Q:1/4=120
+K:Am
+V:MEL inst=marimba gain=0.72
+!mark:hook! !mf! A c e d c e A z | A c e d c e G z | !mark:evidence! F A c B A c F z | C E G F E G C z | G B d c B d G z | !mark:gate! !mp! A c e d c e A z | z8 | !mark:human! !hit! !ff! A c e d c e a z | F A c B A c f z | !mark:audit! C E G F E G c z | G B d c B d g z | A c e d c e a z | !mark:end! !ff! F A c B A c f z | G B d c B d g z | !fermata! A c e d c e A z |
+V:PAD inst=strings gain=0.52
+[Ace]8 | [Ace]8 | [FAc]8 | [CEG]8 | [GBd]8 | !mp! [Ace]8 | !stop(! [FAc]8 !stop)! | !ff! [Ace]8 | [FAc]8 | [CEG]8 | [GBd]8 | [Ace]8 | !ff! [FAc]8 | [GBd]8 | [Ace]8 |
+V:BASS inst=synbass gain=0.82
+A,,/A,,/ z/A,,/ A,,/z/ A,,/A,,/ | A,,/A,,/ z/A,,/ A,,/z/ A,,/A,,/ | F,,/F,,/ z/F,,/ F,,/z/ F,,/F,,/ | C,,/C,,/ z/C,,/ C,,/z/ C,,/C,,/ | G,,/G,,/ z/G,,/ G,,/z/ G,,/G,,/ | A,,/A,,/ z/A,,/ A,,/z/ A,,/A,,/ | z8 | !ff! A,,/A,,/ z/A,,/ A,,/z/ A,,/A,,/ | F,,/F,,/ z/F,,/ F,,/z/ F,,/F,,/ | C,,/C,,/ z/C,,/ C,,/z/ C,,/C,,/ | G,,/G,,/ z/G,,/ G,,/z/ G,,/G,,/ | A,,/A,,/ z/A,,/ A,,/z/ A,,/A,,/ | F,,2 z6 | G,,2 z6 | A,,8 |
+V:PNO inst=piano gain=0.58
+z8 | z8 | [FAc]4 z4 | [CEG]4 z4 | [GBd]4 z4 | !mp! [Ace]4 z4 | z8 | !ff! [Ace]4 [Ace]4 | [FAc]4 [FAc]4 | [CEG]4 [CEG]4 | [GBd]4 [GBd]4 | [Ace]4 [Ace]4 | [FAc]8 | [GBd]8 | [Ace]8 |
+V:DR inst=drums kit=808 gain=0.88
+C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | !mp! C,,2 C,,2 C,,2 C,,2 | z8 | !ff! C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | C,,2 C,,2 C,,2 C,,2 | C,,2 z6 | z8 | z8 |
+V:HAT inst=drums kit=808 gain=0.42
+z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | z8 | !ff! z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | z ^F,, z ^F,, z ^F,, z ^F,, | ^F,,/^F,,/ ^F,,/^F,,/ ^F,,/^F,,/ ^F,,/^F,,/ ^F,,/^F,,/ ^F,,/^F,,/ ^F,,/^F,,/ ^F,,/^F,,/ | z8 | z8 | z8 |
+V:SN inst=drums kit=808 gain=0.46
+z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z8 | !ff! z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z2 D,,2 z2 D,,2 | z8 | z8 | z8 |
+V:CR inst=drums kit=808 gain=0.5
+^C,8 | z8 | z8 | z8 | z8 | z8 | z8 | ^C,8 | z8 | z8 | z8 | z8 | ^C,8 | z8 | z8 |
+</script>
+
+</body>
+</html>

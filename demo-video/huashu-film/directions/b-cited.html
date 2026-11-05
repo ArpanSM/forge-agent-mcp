@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction B · Every Value Has a Page</title>
+<style>
+@font-face { font-family: "Inter"; src: url("../assets/fonts/Inter-var.woff") format("woff"); font-weight: 100 900; }
+@font-face { font-family: "Roboto Condensed"; src: url("../assets/fonts/RobotoCondensed-var.woff") format("woff"); font-weight: 100 900; }
+:root { --cream:#f7f3e9; --green:#173f38; --navy:#142235; --amber:#b45309; }
+* { box-sizing:border-box; }
+html,body { margin:0; width:1920px; height:1080px; overflow:hidden; background:var(--navy); color:var(--cream); font-family:Inter,sans-serif; }
+.frame { position:relative; width:1920px; height:1080px; overflow:hidden;
+  background: radial-gradient(1200px 700px at 75% 10%, #1f354b 0%, transparent 58%), var(--navy); }
+.frame:before { content:""; position:absolute; inset:0; background-image:linear-gradient(rgba(247,243,233,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(247,243,233,.035) 1px,transparent 1px); background-size:80px 80px; mask-image:linear-gradient(180deg,#000 0%,transparent 82%); }
+.top { position:absolute; left:96px; right:96px; top:62px; display:flex; justify-content:space-between; font-family:"Roboto Condensed"; font-size:20px; letter-spacing:.2em; text-transform:uppercase; color:rgba(247,243,233,.66); }
+.top b { color:var(--cream); }
+.kicker { position:absolute; left:96px; top:168px; font-family:"Roboto Condensed"; font-size:22px; letter-spacing:.22em; text-transform:uppercase; color:#e09a52; }
+.big { position:absolute; left:90px; top:218px; width:1180px; font-size:116px; line-height:.94; letter-spacing:-.065em; font-weight:800; }
+.big .thin { color:rgba(247,243,233,.52); font-weight:300; }
+.big .accent { color:#e09a52; }
+.sub { position:absolute; left:100px; top:650px; width:690px; font-size:25px; line-height:1.38; color:rgba(247,243,233,.72); }
+.forty { position:absolute; right:100px; top:170px; text-align:right; font-size:310px; line-height:.8; font-weight:800; letter-spacing:-.08em; color:var(--cream); }
+.forty small { display:block; font-family:"Roboto Condensed"; font-size:24px; letter-spacing:.24em; font-weight:400; color:rgba(247,243,233,.52); margin-top:24px; }
+.card { position:absolute; background:var(--cream); color:var(--green); border-radius:16px; box-shadow:0 38px 90px rgba(0,0,0,.38); overflow:hidden; }
+.card .bar { position:absolute; left:0; top:0; bottom:0; width:10px; background:var(--amber); }
+.evidence { left:100px; bottom:84px; width:1240px; height:210px; }
+.evidence .head { position:absolute; left:40px; top:26px; font-family:"Roboto Condensed"; font-size:17px; letter-spacing:.18em; text-transform:uppercase; color:rgba(23,63,56,.48); }
+.evidence .field { position:absolute; left:40px; top:68px; font-size:35px; font-weight:700; letter-spacing:-.02em; }
+.evidence .value { position:absolute; left:330px; top:68px; font-size:35px; font-weight:700; }
+.evidence .cite { position:absolute; left:710px; top:62px; font-size:20px; color:rgba(23,63,56,.72); }
+.evidence .quote { position:absolute; left:710px; top:118px; font-size:20px; color:rgba(23,63,56,.56); }
+.evidence .conf { position:absolute; right:34px; top:26px; font-family:"Roboto Condensed"; font-size:18px; letter-spacing:.1em; color:#2f7d63; border:1px solid #b9d8c5; background:#eaf5ee; padding:6px 10px; border-radius:100px; }
+.strip { position:absolute; right:100px; bottom:112px; width:500px; height:420px; display:flex; flex-direction:column; gap:10px; transform:rotate(-2deg); }
+.row { height:76px; border:1px solid rgba(247,243,233,.14); background:rgba(247,243,233,.06); border-radius:10px; padding:12px 18px; font-family:"Roboto Condensed"; font-size:19px; letter-spacing:.02em; color:rgba(247,243,233,.64); display:flex; justify-content:space-between; }
+.row b { color:var(--cream); font-weight:600; }
+.row .ok { color:#8fd0ae; }
+.bbox { position:absolute; right:148px; bottom:366px; width:150px; height:64px; border:2px solid #e09a52; box-shadow:0 0 0 4px rgba(224,154,82,.13); }
+.bbox span { position:absolute; right:0; top:-25px; font-family:"Roboto Condensed"; font-size:15px; letter-spacing:.13em; color:#e09a52; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="top"><span><b>FORGE AGENT + MCP</b> / CITED EXTRACTION</span><span>NO INVENTED VALUES</span></div>
+  <div class="kicker">Ridgeline Haulage · onboarding</div>
+  <div class="big">Every value<br><span class="thin">has a</span> page.<br><span class="accent">Every page</span><br>has a box.</div>
+  <div class="sub">45 extracted fields, each with a document, page, bounding box and verbatim quote. The recommendation is built on evidence you can click.</div>
+  <div class="forty">45<small>FIELDS · 100% CITED</small></div>
+
+  <div class="card evidence">
+    <div class="bar"></div>
+    <div class="head">FIELD / VALUE / CITATION / SOURCE QUOTE</div>
+    <div class="field">Legal name</div>
+    <div class="value">Ridgeline Haulage LLC</div>
+    <div class="cite">DOC-ONB-RIDGELINE-APP · Page 1 · bbox 189.0, 127.25, 293.82, 142.99</div>
+    <div class="quote">“Ridgeline Haulage LLC”</div>
+    <div class="conf">100% CONFIDENCE</div>
+  </div>
+
+  <div class="strip">
+    <div class="row"><span>DOC-ONB-RIDGELINE-APP</span><b class="ok">EXTRACTED</b></div>
+    <div class="row"><span>DOC-ONB-RIDGELINE-BANK</span><b class="ok">EXTRACTED</b></div>
+    <div class="row"><span>DOC-ONB-RIDGELINE-COI</span><b class="ok">EXTRACTED</b></div>
+    <div class="row"><span>DOC-ONB-RIDGELINE-MC</span><b class="ok">EXTRACTED</b></div>
+    <div class="row"><span>DOC-ONB-RIDGELINE-W9</span><b class="ok">EXTRACTED</b></div>
+  </div>
+  <div class="bbox"><span>BBOX</span></div>
+</div>
+</body>
+</html>
