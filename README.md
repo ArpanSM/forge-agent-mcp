@@ -7,6 +7,7 @@ local proof of a document workflow that stops for a human before it changes anyt
 not a production service.
 
 - [87-second narrated walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4)
+- [30-second launch film](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-launch.mp4)
 - [Case study](docs/case-study.md)
 - [Learning map](docs/learning/agent-mcp.md)
 - [Full evaluation report](docs/evals/agent-eval.md)
@@ -189,6 +190,7 @@ itself stays offline unless you run `make eval-live`.
 ## Demo and screenshots
 
 - [87-second narrated walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4) and the [5-minute walkthrough script](docs/demo-script.md).
+- [30-second launch film](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-launch.mp4) — a music-led companion cut about the approval gate.
 - [Review queue](docs/screenshots/queue.png)
 - [Case detail with flags and recommendation](docs/screenshots/case-detail.png)
 - [Every field cites a document, page, box and quote](docs/screenshots/citations.png)
