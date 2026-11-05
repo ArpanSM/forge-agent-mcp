@@ -1,5 +1,8 @@
 # Demo script
 
+**Recorded walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.0/forge-agent-mcp-demo.mp4
+
+
 Two recordings:
 
 1. a **60–90 second** portfolio walkthrough for the README and Upwork card;

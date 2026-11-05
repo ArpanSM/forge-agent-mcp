@@ -6,8 +6,7 @@ local proof of a document workflow that stops for a human before it changes anyt
 **Status:** built, evaluated offline, and demonstrated locally. This is a portfolio proof,
 not a production service.
 
-- [60–90 second walkthrough](docs/demo-script.md) — **video placeholder: the recording is
-  being finished and the link will be added with the `v0.1.0` release.**
+- [60–90 second walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.0/forge-agent-mcp-demo.mp4)
 - [Case study](docs/case-study.md)
 - [Learning map](docs/learning/agent-mcp.md)
 - [Full evaluation report](docs/evals/agent-eval.md)
