@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     forge_approval_secret: SecretStr | None = None
     gateway_approval_ttl_seconds: int = 900
 
+    console_host: str = "127.0.0.1"
+    console_port: int = 8000
+
 
 def _secret(value: SecretStr | None) -> str | None:
     if value is None:

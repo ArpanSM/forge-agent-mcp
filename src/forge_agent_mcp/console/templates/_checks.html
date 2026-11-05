@@ -1,0 +1,51 @@
+{% set cross = detail.result.cross_check if detail.result else None %}
+{% set policy = detail.result.policy if detail.result else None %}
+<div class="card checks-card">
+  <div class="card-head">
+    <div>
+      <h2>Gateway checks</h2>
+      <p class="card-sub">Evidence read and written through MCP</p>
+    </div>
+    <span class="pill ok">scoped</span>
+  </div>
+  <div class="card-body" style="padding-top:8px">
+    {% if cross %}
+    <dl>
+      <div class="check-row"><dt>Duplicate</dt><dd>{% if cross.duplicate %}<span class="auth-warn">yes</span>{% else %}<span class="auth-ok">no</span>{% endif %}</dd></div>
+      {% if cross.invoice_number %}<div class="check-row"><dt>Invoice</dt><dd>{{ cross.invoice_number }}</dd></div>{% endif %}
+      {% if cross.document_hash %}<div class="check-row"><dt>Hash</dt><dd>{{ cross.document_hash | short(18) }}</dd></div>{% endif %}
+      {% for match in cross.matches %}
+      <div class="check-row"><dt>Match</dt><dd>{{ match.kind }} · {{ match.case_id }}{% if match.invoice_number %} · {{ match.invoice_number }}{% endif %}</dd></div>
+      {% endfor %}
+    </dl>
+    {% elif detail.result %}
+    <p class="checks-empty">No invoice duplicate check applies to this onboarding case.</p>
+    {% else %}
+    <p class="checks-empty">Run the case to call <code>check_duplicate</code> and load the policy pack.</p>
+    {% endif %}
+
+    {% if policy %}
+    <div class="divider"></div>
+    <div class="rule-label" style="margin-bottom:4px">Policy thresholds</div>
+    <dl>
+      <div class="check-row"><dt>Auto liability</dt><dd>${{ '{:,}'.format(policy.thresholds.min_auto_liability) }}</dd></div>
+      <div class="check-row"><dt>Cargo</dt><dd>${{ '{:,}'.format(policy.thresholds.min_cargo_limit) }}</dd></div>
+      <div class="check-row"><dt>Authority age</dt><dd>{{ policy.thresholds.min_authority_age_days }} days</dd></div>
+      <div class="check-row"><dt>Bank change</dt><dd>{{ policy.thresholds.bank_change_window_days }} days</dd></div>
+      <div class="check-row"><dt>High-flag hold</dt><dd>{{ policy.thresholds.high_flag_hold_threshold }} flags</dd></div>
+    </dl>
+    {% endif %}
+
+    <div class="divider"></div>
+    <div class="rule-label" style="margin-bottom:5px">Tool path</div>
+    <div class="tag-row">
+      <span class="mini">read_case</span>
+      <span class="mini">get_policy</span>
+      <span class="mini">record_extraction</span>
+      <span class="mini">check_duplicate</span>
+      <span class="mini">record_recommendation</span>
+      <span class="mini tone-high">create_decision · approve</span>
+    </div>
+    <p class="note-hint" style="margin-top:6px">The agent bearer token carries <code>freight:read</code> and <code>freight:write</code>. The decision call uses a separate console-minted <code>freight:approve</code> token.</p>
+  </div>
+</div>

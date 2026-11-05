@@ -546,3 +546,43 @@ def test_write_demo_shows_every_path_and_exits_zero(gateway, capsys) -> None:
         assert expected in output
     assert _decisions(gateway) == 1
     assert gateway.store.latest_crm_stage(TENANT, CASE_ID) is not None
+
+
+def test_a_second_decision_returns_case_already_decided_with_the_existing_result(
+    gateway,
+) -> None:
+    token = _approver_token(gateway)
+    first = asyncio.run(
+        _call(
+            gateway,
+            token,
+            "create_decision",
+            _decision_call(approval_token=_approval(gateway), idempotency_key="idem-first"),
+        )
+    )
+    second = asyncio.run(
+        _call(
+            gateway,
+            token,
+            "create_decision",
+            _decision_call(
+                approval_token=_approval(gateway),
+                idempotency_key="idem-second",
+            ),
+        )
+    )
+
+    assert first.is_error is False
+    assert second.is_error is True
+    assert second.structured_content is not None
+    assert second.structured_content["error_code"] == "case_already_decided"
+    assert (
+        second.structured_content["data"]["decision_id"]
+        == (first.structured_content["data"]["decision_id"])
+    )
+    assert _decisions(gateway) == 1
+    current = gateway.store.latest_decision(TENANT, CASE_ID)
+    assert (
+        current is not None
+        and current.decision_id == second.structured_content["data"]["decision_id"]
+    )

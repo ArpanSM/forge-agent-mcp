@@ -1,0 +1,78 @@
+{% set rec = detail.result.recommendation if detail.result else None %}
+{% if rec %}
+  {% set tone = 'tone-medium' %}
+  {% if rec.decision in ['approve'] %}{% set tone = 'tone-ok' %}
+  {% elif rec.decision in ['decline', 'escalate'] %}{% set tone = 'tone-hard' %}
+  {% elif rec.decision in ['request_documents', 'hold'] %}{% set tone = 'tone-high' %}
+  {% endif %}
+  <div class="card rec-card {{ tone }}">
+    <div class="card-head">
+      <div>
+        <h2>Recommendation</h2>
+        <p class="card-sub">Deterministic rule engine · the human decides</p>
+      </div>
+      <span class="rule-chip">{{ rec.decision }}</span>
+    </div>
+    <div class="rec-body">
+      <div class="rec-decision">
+        <div class="rec-glyph">
+          {% if rec.decision == 'approve' %}<svg class="icon"><use href="#i-check"></use></svg>
+          {% elif rec.decision in ['decline', 'escalate'] %}<svg class="icon"><use href="#i-alert"></use></svg>
+          {% else %}<svg class="icon"><use href="#i-info"></use></svg>{% endif %}
+        </div>
+        <div>
+          <h3>{{ rec.recommendation | recommendation_label }}</h3>
+          <div class="rec-meta">
+            <span>Decision: <strong>{{ rec.decision | replace('_', ' ') }}</strong></span>
+            <span>·</span>
+            <span>{{ detail.result.flags | length }} flag(s)</span>
+            {% if detail.result.audit_verified %}<span>· audit verified</span>{% endif %}
+          </div>
+        </div>
+      </div>
+      <p class="rec-rationale">{{ rec.rationale }}</p>
+      {% if rec.conditions %}
+      <div class="rec-section">
+        <h4>Conditions</h4>
+        <ul class="rec-list">
+          {% for condition in rec.conditions %}<li>{{ condition }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if rec.evidence_gaps %}
+      <div class="rec-section">
+        <h4>Evidence gaps</h4>
+        <ul class="rec-list gaps">
+          {% for gap in rec.evidence_gaps %}<li>{{ gap }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      <div class="divider"></div>
+      <div class="rec-meta" style="line-height:1.45">
+        <span>{{ detail.result.review.summary if detail.result.review else detail.result.case.summary }}</span>
+      </div>
+    </div>
+  </div>
+{% else %}
+  <div class="card rec-card">
+    <div class="card-head">
+      <div>
+        <h2>Recommendation</h2>
+        <p class="card-sub">No run has produced a recommendation yet</p>
+      </div>
+    </div>
+    <div class="rec-body">
+      <p class="rec-rationale">Run the case to classify the packet, extract cited fields, apply the deterministic validators and produce a recommendation for review.</p>
+      {% if detail.result and detail.result.status == 'failed' %}
+      <div class="error-banner"><strong>Run failed</strong>{{ detail.result.error }}</div>
+      <form method="post" action="/cases/{{ detail.view.case_id }}/retry">
+        <button class="btn primary" type="submit" style="width:100%;padding:8px">Retry run</button>
+      </form>
+      {% else %}
+      <form method="post" action="/cases/{{ detail.view.case_id }}/run">
+        <button class="btn primary" type="submit" style="width:100%;padding:8px">Run case</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}

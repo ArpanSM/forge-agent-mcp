@@ -146,6 +146,8 @@ CREATE TABLE IF NOT EXISTS decisions (
     created_at TEXT NOT NULL,
     PRIMARY KEY (tenant_id, decision_id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS decisions_case_idx
+    ON decisions (tenant_id, case_id);
 
 CREATE TABLE IF NOT EXISTS approvals (
     tenant_id TEXT NOT NULL,
@@ -227,6 +229,14 @@ class ApprovalReusedError(Exception):
 
 class UnknownDecisionError(Exception):
     """The decision is outside the four values the CRM mapping understands."""
+
+
+class CaseAlreadyDecidedError(Exception):
+    """The case already has a committed decision; no second decision is allowed."""
+
+    def __init__(self, decision: DecisionRecord) -> None:
+        super().__init__(f"Case {decision.case_id!r} already has decision {decision.decision_id}.")
+        self.decision = decision
 
 
 @dataclass(frozen=True)
@@ -723,18 +733,7 @@ class GatewayStore:
             for row in rows
         ]
 
-    def latest_decision(self, tenant_id: str, case_id: str) -> DecisionRecord | None:
-        row = self._connection.execute(
-            """
-            SELECT * FROM decisions
-            WHERE tenant_id = ? AND case_id = ?
-            ORDER BY created_at DESC, rowid DESC
-            LIMIT 1
-            """,
-            (tenant_id, case_id),
-        ).fetchone()
-        if row is None:
-            return None
+    def _decision_from_row(self, row: sqlite3.Row) -> DecisionRecord:
         return DecisionRecord(
             decision_id=row["decision_id"],
             case_id=row["case_id"],
@@ -745,6 +744,18 @@ class GatewayStore:
             principal=row["principal"],
             created_at=row["created_at"],
         )
+
+    def latest_decision(self, tenant_id: str, case_id: str) -> DecisionRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM decisions
+            WHERE tenant_id = ? AND case_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (tenant_id, case_id),
+        ).fetchone()
+        return self._decision_from_row(row) if row is not None else None
 
     def latest_crm_stage(self, tenant_id: str, case_id: str) -> CrmStageRecord | None:
         row = self._connection.execute(
@@ -812,7 +823,9 @@ class GatewayStore:
         The idempotency and single-use checks happen inside the same transaction as
         the writes, so a retry cannot create a second decision. A same-key retry with
         the same canonical arguments returns the stored result with ``replayed`` set;
-        different arguments raise ``IdempotencyConflictError``.
+        different arguments raise ``IdempotencyConflictError``. A case can have one
+        decision: a fresh key for an already-decided case raises
+        ``CaseAlreadyDecidedError`` with that decision.
         """
 
         now = _now()
@@ -860,6 +873,13 @@ class GatewayStore:
             if used is not None:
                 raise ApprovalReusedError("This approval token has already been used.")
 
+            existing = self._connection.execute(
+                "SELECT * FROM decisions WHERE tenant_id = ? AND case_id = ? LIMIT 1",
+                (tenant_id, request.case_id),
+            ).fetchone()
+            if existing is not None:
+                raise CaseAlreadyDecidedError(self._decision_from_row(existing))
+
             outcome = decision_outcome(request.decision)
             record = DecisionRecord(
                 decision_id=f"dec_{uuid.uuid4().hex[:12]}",
@@ -893,28 +913,37 @@ class GatewayStore:
                 created_at=now,
             )
 
-            self._connection.execute(
-                """
-                INSERT INTO decisions (
-                    tenant_id, case_id, decision_id, decision, rationale,
-                    conditions_json, approver, principal, approval_jti,
-                    idempotency_key, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    tenant_id,
-                    request.case_id,
-                    record.decision_id,
-                    request.decision,
-                    request.rationale,
-                    json.dumps(request.conditions, sort_keys=True),
-                    claims.sub,
-                    principal,
-                    claims.jti,
-                    request.idempotency_key,
-                    now,
-                ),
-            )
+            try:
+                self._connection.execute(
+                    """
+                    INSERT INTO decisions (
+                        tenant_id, case_id, decision_id, decision, rationale,
+                        conditions_json, approver, principal, approval_jti,
+                        idempotency_key, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tenant_id,
+                        request.case_id,
+                        record.decision_id,
+                        request.decision,
+                        request.rationale,
+                        json.dumps(request.conditions, sort_keys=True),
+                        claims.sub,
+                        principal,
+                        claims.jti,
+                        request.idempotency_key,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                winner = self._connection.execute(
+                    "SELECT * FROM decisions WHERE tenant_id = ? AND case_id = ? LIMIT 1",
+                    (tenant_id, request.case_id),
+                ).fetchone()
+                if winner is not None:
+                    raise CaseAlreadyDecidedError(self._decision_from_row(winner)) from exc
+                raise
             self._connection.execute(
                 """
                 INSERT INTO approvals (

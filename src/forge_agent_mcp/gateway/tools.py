@@ -57,7 +57,12 @@ from .models import (
     RecordExtractionInput,
     RecordRecommendationInput,
 )
-from .store import ApprovalReusedError, GatewayStore, IdempotencyConflictError
+from .store import (
+    ApprovalReusedError,
+    CaseAlreadyDecidedError,
+    GatewayStore,
+    IdempotencyConflictError,
+)
 
 CaseEnvelope = Envelope[CaseView]
 DocumentEnvelope = Envelope[DocumentView]
@@ -287,6 +292,46 @@ def _audit_decision_replay(
             "idempotency_key": request.idempotency_key,
             "source": "precheck",
         },
+    )
+
+
+def _already_decided(
+    store: GatewayStore,
+    *,
+    tenant_id: str,
+    case_id: str,
+    principal: str,
+    request: CreateDecisionInput,
+    decision: DecisionRecord,
+) -> ToolResult:
+    message = (
+        f"Case {case_id!r} already has decision {decision.decision_id}; "
+        "no second decision was written."
+    )
+    store.append_audit(
+        tenant_id=tenant_id,
+        case_id=case_id,
+        tool="create_decision",
+        event="write_denied",
+        outcome="denied",
+        principal=principal,
+        input_hash=canonical_hash(request),
+        detail={
+            "error_code": "case_already_decided",
+            "decision_id": decision.decision_id,
+            "idempotency_key": request.idempotency_key,
+        },
+    )
+    envelope = DecisionEnvelope(
+        ok=False,
+        data=decision,
+        error_code="case_already_decided",
+        message=message,
+    )
+    return ToolResult(
+        content=envelope.model_dump_json(),
+        structured_content=envelope.model_dump(mode="json"),
+        is_error=True,
     )
 
 
@@ -1066,6 +1111,15 @@ def register_tools(
                 request=request,
                 error_code=REUSED_CODE,
                 message="This approval token has already been used.",
+            )
+        except CaseAlreadyDecidedError as exc:
+            return _already_decided(
+                store,
+                tenant_id=access.tenant_id,
+                case_id=request.case_id,
+                principal=context.principal,
+                request=request,
+                decision=exc.decision,
             )
 
         return DecisionEnvelope(ok=True, data=record)

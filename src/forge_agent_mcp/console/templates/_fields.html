@@ -1,0 +1,38 @@
+{% if detail.fields %}
+<div class="table-scroll">
+  <table style="min-width:820px;table-layout:fixed">
+    <thead>
+      <tr>
+        <th style="width:16%">Field</th>
+        <th style="width:19%">Value</th>
+        <th style="width:10%">Confidence</th>
+        <th style="width:21%">Citation</th>
+        <th style="width:34%">Source quote</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for field in detail.fields %}
+      <tr>
+        <td>
+          <div class="stack">
+            <strong>{{ field.label }}</strong>
+            <span class="mono-small">{{ field.document_type | replace('_', ' ') }}</span>
+          </div>
+        </td>
+        <td><span style="color:var(--ink);font-weight:550;overflow-wrap:anywhere">{{ field.value }}</span></td>
+        <td><span class="mono-small">{{ '%.0f' | format(field.confidence * 100) }}%</span></td>
+        <td>
+          <div class="stack">
+            <strong style="font-size:9.4px">{{ field.document_id }}</strong>
+            <span class="mono-small">Page {{ field.page }} · bbox {{ field.bbox | join(', ') }}</span>
+          </div>
+        </td>
+        <td><span class="mono-small" style="color:var(--ink-2)">“{{ field.quote }}”</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">Run the case to extract fields with document, page and bounding-box citations.</p>
+{% endif %}

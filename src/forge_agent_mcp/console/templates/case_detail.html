@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block content %}
+{% set result = detail.result %}
+{% set flags = result.flags if result else detail.view.flags %}
+{% set decision = detail.decision %}
+{% set rec = result.recommendation if result else None %}
+{% set status_text = detail.view.status | replace('_', ' ') | capitalize %}
+{% set status_tone = 'tone-pending' %}
+{% if detail.pending_approval %}{% set status_text = 'Pending approval' %}{% set status_tone = 'tone-high' %}
+{% elif decision == 'approve' or decision == 'conditional_approve' %}{% set status_text = 'Approved' %}{% set status_tone = 'tone-ok' %}
+{% elif decision == 'decline' %}{% set status_text = 'Declined' %}{% set status_tone = 'tone-hard' %}
+{% elif decision == 'request_documents' %}{% set status_text = 'Awaiting documents' %}{% set status_tone = 'tone-high' %}
+{% elif result and result.status == 'failed' %}{% set status_text = 'Failed' %}{% set status_tone = 'tone-hard' %}
+{% elif detail.view.status == 'extracting' %}{% set status_text = 'In progress' %}{% set status_tone = 'tone-medium' %}
+{% endif %}
+
+<div style="margin-bottom:11px">
+  <a class="back-link" href="/">← Back to queue</a>
+</div>
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow"><span class="eyebrow-dot"></span> {{ detail.view.case_type | capitalize }} case · Northwind Freight Capital</div>
+    <div class="h1-row">
+      <h1>{{ detail.view.carrier.legal_name }}</h1>
+      <span class="synth-badge">SYNTHETIC</span>
+      <span class="status-pill {{ status_tone }}"><i></i>{{ status_text }}</span>
+    </div>
+    <p class="case-sub">{{ detail.view.carrier.dba }} · MC {{ detail.view.carrier.mc_number }} · DOT {{ detail.view.carrier.dot_number }} · <span class="mono">{{ detail.view.case_id }}</span></p>
+  </div>
+</section>
+
+{% if error %}
+<div class="error-banner"><strong>Action refused</strong>{{ error }}</div>
+{% endif %}
+
+<div class="meta-grid">
+  <div class="meta">
+    <span class="meta-label">Case</span>
+    <span class="meta-value mono">{{ detail.view.case_id }}</span>
+  </div>
+  <div class="meta">
+    <span class="meta-label">Type</span>
+    <span class="meta-value">{{ detail.view.case_type | capitalize }}</span>
+  </div>
+  <div class="meta">
+    <span class="meta-label">Status</span>
+    <span class="meta-value">{{ status_text }}</span>
+  </div>
+  <div class="meta">
+    <span class="meta-label">Documents</span>
+    <span class="meta-value">{{ detail.view.documents | length }} · {{ detail.view.extraction_count }} extraction(s)</span>
+  </div>
+  <div class="meta">
+    <span class="meta-label">Recommendation</span>
+    <span class="meta-value">
+      {% if rec %}{{ rec.decision | replace('_', ' ') | capitalize }}
+      {% elif detail.view.recommendation %}{{ detail.view.recommendation.recommendation | replace('_', ' ') | capitalize }}
+      {% else %}Not run{% endif %}
+    </span>
+  </div>
+  <div class="meta">
+    <span class="meta-label">Decision</span>
+    <span class="meta-value">{{ decision | decision_status if decision else '—' }}</span>
+  </div>
+</div>
+
+<div class="signal-bar">
+  {% for severity in ['hard_stop', 'high', 'medium', 'low'] %}
+  {% set count = flags | selectattr('severity', 'equalto', severity) | list | length %}
+  <div class="sig tone-{{ severity }}">
+    <b>{{ count }}</b><span>{{ severity | replace('_', ' ') }}</span>
+  </div>
+  {% endfor %}
+  <div class="sig-rest">Recommendation <b>{{ rec.recommendation | recommendation_label if rec else '—' }}</b></div>
+  <div class="sig-spacer"></div>
+  <div class="sig-right">
+    {% if result and result.audit_verified %}
+    <span class="auth-ok">Audit chain verified</span>
+    {% elif detail.pending_approval %}
+    <span>Pending write</span>
+    {% elif result %}
+    <span class="auth-warn">Audit not verified</span>
+    {% else %}
+    <span>Not run</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="review-grid">
+  <div class="left-col">
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>Risk flags</h2>
+          <p class="card-sub">Severity is owned by the deterministic rule engine</p>
+        </div>
+        <span class="count-pill">{{ flags | length }}</span>
+      </div>
+      <div class="card-body" style="padding-top:4px">
+        {% include "_flags.html" %}
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:13px">
+      <div class="card-head">
+        <div>
+          <h2>Documents in the packet</h2>
+          <p class="card-sub">Metadata, page count and content hash from the gateway</p>
+        </div>
+      </div>
+      <div class="card-body" style="padding-top:8px">
+        {% include "_documents.html" %}
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:13px">
+      <div class="card-head">
+        <div>
+          <h2>Extracted fields and citations</h2>
+          <p class="card-sub">Every value points to a document, page and bounding box</p>
+        </div>
+        <span class="count-pill">{{ detail.fields | length }} fields</span>
+      </div>
+      <div class="card-body" style="padding-top:8px">
+        {% include "_fields.html" %}
+      </div>
+    </section>
+  </div>
+
+  <div class="right-col">
+    {% include "_recommendation.html" %}
+    {% include "_decision.html" %}
+    {% include "_checks.html" %}
+  </div>
+</div>
+
+<section class="card audit-card">
+  <div class="card-head">
+    <div>
+      <h2>Audit trail</h2>
+      <p class="card-sub">Append-only gateway events for this case</p>
+    </div>
+    <button class="btn small" type="button" hx-get="/cases/{{ detail.view.case_id }}/audit" hx-target="#audit-body" hx-swap="innerHTML">
+      <svg class="icon" style="width:11px;height:11px"><use href="#i-refresh"></use></svg> Refresh
+    </button>
+  </div>
+  <div class="card-body" style="padding-top:8px"
+       id="audit-body">
+    {% include "_audit.html" %}
+  </div>
+  <div class="audit-foot">
+    <span>Source: <code>get_audit</code> through the MCP gateway · {{ detail.audit | length }} event(s)</span>
+    <span class="right">
+      {% if result and result.audit_verified %}<span class="auth-ok">chain verified</span>
+      {% elif detail.pending_approval %}<span>waiting for the human decision</span>
+      {% else %}<span class="faint">not verified</span>{% endif %}
+    </span>
+  </div>
+</section>
+{% endblock %}

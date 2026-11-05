@@ -24,6 +24,7 @@ data/corpus/
 data/extractions/
 data/raw/
 data/private/
+data/console-demo/
 data/*.db
 data/*.db-wal
 data/*.db-shm
