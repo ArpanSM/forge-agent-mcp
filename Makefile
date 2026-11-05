@@ -3,10 +3,11 @@ PIP_FLAGS ?=
 PYTHONPATH ?= src
 CASE ?=
 OFFLINE ?= 0
+LIVE_PROVIDER ?= orcarouter
 
 export PYTHONPATH
 
-.PHONY: install corpus test test-live lint extract review gateway gateway-client gateway-demo write-demo console demo demo-auto
+.PHONY: install corpus test test-live lint extract review gateway gateway-client gateway-demo write-demo console demo demo-auto eval eval-live
 
 install:
 	$(PYTHON) -m pip install $(PIP_FLAGS) -e ".[dev]"
@@ -57,3 +58,11 @@ demo:
 demo-auto:
 	@test -f data/corpus/corpus.json || $(MAKE) corpus
 	$(PYTHON) -m forge_agent_mcp.console demo --auto
+
+eval:
+	@test -f data/corpus/corpus.json || $(MAKE) corpus
+	$(PYTHON) -m forge_agent_mcp.evals --out reports
+
+eval-live:
+	@test -f data/corpus/corpus.json || $(MAKE) corpus
+	$(PYTHON) -m forge_agent_mcp.evals --out reports/live --provider "$(LIVE_PROVIDER)"

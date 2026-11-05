@@ -2,7 +2,7 @@
 
 A freight underwriting agent and an MCP business-tool gateway, built as a public, synthetic proof of a reliable document-operations workflow.
 
-**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, the MCP gateway with auth, tenant isolation, audit and the approval-token/idempotent decision write, and the LangGraph agent plus reviewer console. Evaluation next.
+**Status:** implementation started — scaffold, model-provider abstraction, synthetic corpus generator, cited extraction, the deterministic rule engine, the MCP gateway with auth, tenant isolation, audit and the approval-token/idempotent decision write, the LangGraph agent plus reviewer console, and the offline evaluation harness with baseline, metrics, hard gates and reports.
 
 - [Spec and implementation tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - [Gateway guide](docs/gateway.md)
@@ -27,6 +27,8 @@ make write-demo      # approval refusal, commit, replay, conflict and audit chai
 make demo            # gateway + agent + console; completes both demo cases, then serves results
 make console         # gateway + agent + console; two cases wait for the human review
 make demo-auto       # headless: the same two cases completed by a scripted reviewer
+make eval            # offline baseline vs fixed on 12 eval + 4 held-out cases
+make eval-live       # optional live-provider eval; needs a configured model key
 ```
 
 If the system Python is externally managed, pass the flags your environment needs, for
@@ -147,6 +149,34 @@ inspected. It does not open a browser. `make console` leaves the same two cases 
 a human review. The decision is written once with a deterministic idempotency key, and the
 audit chain is verified on the way back. See [`docs/agent.md`](docs/agent.md) for the state
 model, token boundary, idempotency and failure paths.
+
+## Evaluation
+
+`make eval` runs the naive baseline and the fixed pipeline on the same 12 eval cases, then
+reports the 4 held-out carriers separately. It needs no network and no API key: both
+pipelines use `FakeProvider`, while the fixed pipeline extracts with the deterministic
+template parser and writes through a real in-process FastMCP HTTP gateway.
+
+- **Baseline:** one prompt over concatenated document text, no classification, citations,
+  validators, approval or audit, and a direct CRM write that ignores the idempotency key.
+  It always approves, so the comparison is deliberately weak.
+- **Fixed:** the eight-stage LangGraph runner and the real gateway. The harness acts as an
+  automated reviewer: it mints the console-side approval token and the short-lived
+  `freight:approve` bearer token, then resumes the interrupt through the console service.
+- **Metrics:** classification accuracy, field F1 for clean and noisy cases, citation
+  accuracy, hard-stop recall, false-approve rate, red-flag precision, decision agreement,
+  approval bypass, duplicate writes, audit completeness, injection resistance, tool-call
+  success, p50/p95 latency and estimated token cost.
+- **Hard gates:** 100% hard-stop recall, zero false approves on hard stops, zero approval
+  bypasses, zero duplicate writes, 100% audit completeness and 100% injection resistance.
+  The process exits non-zero when a fixed-pipeline gate fails. The baseline is expected to
+  fail and its gate status is shown for contrast.
+
+Reports are written to `reports/eval-report.json` (source of truth) and
+`reports/eval-report.md`; both are generated files and gitignored. The JSON includes the
+per-case rows, metric intervals, failure gallery, held-out results, manifest hash,
+provider, timestamp and caveats. `make eval-live` runs the same harness against
+`LIVE_PROVIDER` (default `orcarouter`, or `lfm3`) when a live key or endpoint is configured.
 
 ## The problem
 
