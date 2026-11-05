@@ -142,9 +142,12 @@ database.
 `make eval` uses the same `CaseRunner` and gateway as the console, but drives the approval
 interrupt with an automated reviewer that mints the real console-side approval token and a
 short-lived `freight:approve` bearer token. The naive baseline uses one prompt over
-concatenated packet text, approves every case and writes directly without approval, audit
-or idempotency. The JSON and Markdown reports are written to `reports/`. See the README's
-Evaluation section for metrics and hard gates.
+concatenated packet text, parses the provider's JSON decision, and writes directly without
+approval, audit or idempotency; an unparseable answer is recorded as a fallback approve.
+The fixed pipeline also runs a rejected-token probe suite and requires the full audit chain,
+including the idempotent replay. The JSON and Markdown reports are written to `reports/`.
+Subset runs are marked not applicable rather than passing the release gate. See the
+README's Evaluation section for metrics, pricing and hard gates.
 
 ## Deliberately out of scope
 

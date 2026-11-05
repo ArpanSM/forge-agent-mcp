@@ -159,24 +159,31 @@ template parser and writes through a real in-process FastMCP HTTP gateway.
 
 - **Baseline:** one prompt over concatenated document text, no classification, citations,
   validators, approval or audit, and a direct CRM write that ignores the idempotency key.
-  It always approves, so the comparison is deliberately weak.
+  It parses the provider's JSON decision; the offline `FakeProvider` returns a deterministic
+  approve, and an unparseable answer is recorded as a fallback approve rather than hidden.
 - **Fixed:** the eight-stage LangGraph runner and the real gateway. The harness acts as an
   automated reviewer: it mints the console-side approval token and the short-lived
   `freight:approve` bearer token, then resumes the interrupt through the console service.
+  A probe suite exercises blank, expired, mismatched, wrong-payload and reused approval
+  tokens before the release run.
 - **Metrics:** classification accuracy, field F1 for clean and noisy cases, citation
   accuracy, hard-stop recall, false-approve rate, red-flag precision, decision agreement,
   approval bypass, duplicate writes, audit completeness, injection resistance, tool-call
-  success, p50/p95 latency and estimated token cost.
+  success, p50/p95 latency and token counts/cost.
 - **Hard gates:** 100% hard-stop recall, zero false approves on hard stops, zero approval
   bypasses, zero duplicate writes, 100% audit completeness and 100% injection resistance.
-  The process exits non-zero when a fixed-pipeline gate fails. The baseline is expected to
+  The audit gate requires read, extraction, recommendation, write and replay events with
+  hashes. The process exits non-zero when a fixed-pipeline gate fails. A subset/smoke run is
+  marked not applicable instead of claiming a release pass. The baseline is expected to
   fail and its gate status is shown for contrast.
 
 Reports are written to `reports/eval-report.json` (source of truth) and
 `reports/eval-report.md`; both are generated files and gitignored. The JSON includes the
 per-case rows, metric intervals, failure gallery, held-out results, manifest hash,
-provider, timestamp and caveats. `make eval-live` runs the same harness against
-`LIVE_PROVIDER` (default `orcarouter`, or `lfm3`) when a live key or endpoint is configured.
+provider, pricing, timestamp and caveats. `make eval` uses no prices and reports token
+counts with `$0.00` for the free offline model; `make eval-live` runs against
+`LIVE_PROVIDER` (default `orcarouter`, or `lfm3`) and accepts
+`LIVE_INPUT_PRICE_PER_1K`/`LIVE_OUTPUT_PRICE_PER_1K` to compute an estimated cost.
 
 ## The problem
 
