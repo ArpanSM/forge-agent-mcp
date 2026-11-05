@@ -1,7 +1,7 @@
 # Case study: an underwriting agent that cannot approve itself
 
 **Code:** https://github.com/ArpanSM/forge-agent-mcp
-**Walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.0/forge-agent-mcp-demo.mp4
+**Walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4
 **Evaluation:** [full report](evals/agent-eval.md)
 
 ## The problem

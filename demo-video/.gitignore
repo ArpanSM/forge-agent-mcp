@@ -1,0 +1,13 @@
+# Argo intermediates (clips, raw capture, timing, traces)
+.argo/
+test-results/
+playwright-report/
+
+# Local tooling
+node_modules/
+*.tmp.*
+
+# Release artifacts (uploaded to GitHub Releases, kept out of git)
+videos/
+qa/*.jpg
+qa/*.png

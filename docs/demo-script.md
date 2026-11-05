@@ -1,6 +1,6 @@
 # Demo script
 
-**Recorded walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.0/forge-agent-mcp-demo.mp4
+**Recorded walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4
 
 
 Two recordings:

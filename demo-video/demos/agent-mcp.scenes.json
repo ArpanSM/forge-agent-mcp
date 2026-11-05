@@ -1,0 +1,62 @@
+[
+  {
+    "scene": "queue",
+    "text": "Freight factors review packets of PDFs to onboard carriers and fund invoices. This is a synthetic queue: one clean onboarding case, one invoice with two high flags.",
+    "voice": "female",
+    "speed": 1.06
+  },
+  {
+    "scene": "ridgeline",
+    "text": "The agent classified five documents and extracted the fields the rules need. Every value carries a document, page, bounding box and verbatim quote.",
+    "voice": "female",
+    "speed": 1.06
+  },
+  {
+    "scene": "citations",
+    "text": "Deterministic validators own the flags and the decision. The model can explain a flag, but it cannot overrule a hard stop. This packet is clean, so the recommendation is approve.",
+    "voice": "female",
+    "speed": 1.06,
+    "overlay": {
+      "type": "callout",
+      "text": "Cited evidence · page + bbox",
+      "placement": "bottom-left",
+      "motion": "fade-in"
+    }
+  },
+  {
+    "scene": "approve",
+    "text": "The console mints an approval token bound to this case, decision and payload. The agent never holds the signing key. The gateway commits the decision, CRM stage, idempotency row and audit event in one transaction.",
+    "voice": "female",
+    "speed": 1.06,
+    "overlay": {
+      "type": "callout",
+      "text": "Human decision",
+      "placement": "bottom-left",
+      "motion": "fade-in"
+    }
+  },
+  {
+    "scene": "audit",
+    "text": "The audit chain names the reviewer, the approval token id and the payload hash. A retry with the same key replays the result; a changed payload is refused.",
+    "voice": "female",
+    "speed": 1.06
+  },
+  {
+    "scene": "northgate",
+    "text": "The invoice case is different. The total does not match the rate confirmation and the POD weight differs from the BOL, so the recommendation is request documents, not approve.",
+    "voice": "female",
+    "speed": 1.06,
+    "overlay": {
+      "type": "callout",
+      "text": "A hold cannot be approved",
+      "placement": "bottom-left",
+      "motion": "fade-in"
+    }
+  },
+  {
+    "scene": "close",
+    "text": "Twelve evaluation cases, four held out, six hard gates. The fixed pipeline passed all six; the naive baseline failed all six. Code and measured report are in the repository.",
+    "voice": "female",
+    "speed": 1.06
+  }
+]

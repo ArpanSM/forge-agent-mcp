@@ -1,0 +1,261 @@
+{
+  "file": "videos/agent-mcp.mp4",
+  "info": {
+    "w": 1920,
+    "h": 1080,
+    "fps": 30.0,
+    "dur": 86.833,
+    "audio": true
+  },
+  "picture": {
+    "frame0": {
+      "mean": 199.4,
+      "contrast": 63.4
+    },
+    "flashes": [],
+    "pops": [
+      4.8,
+      4.933,
+      5.0,
+      5.067,
+      5.267,
+      5.333,
+      5.467,
+      5.667,
+      5.867,
+      17.633,
+      17.833,
+      17.933,
+      51.367,
+      62.567,
+      79.733,
+      81.0
+    ],
+    "cuts": [
+      4.167,
+      13.967,
+      24.333,
+      36.233,
+      42.367,
+      67.2,
+      73.833
+    ],
+    "frozen": [
+      {
+        "from": 12.27,
+        "to": 13.93,
+        "secs": 1.67,
+        "to_end": false
+      },
+      {
+        "from": 22.73,
+        "to": 24.33,
+        "secs": 1.6,
+        "to_end": false
+      },
+      {
+        "from": 34.83,
+        "to": 36.23,
+        "secs": 1.4,
+        "to_end": false
+      },
+      {
+        "from": 50.0,
+        "to": 51.37,
+        "secs": 1.37,
+        "to_end": false
+      },
+      {
+        "from": 60.87,
+        "to": 62.57,
+        "secs": 1.7,
+        "to_end": false
+      },
+      {
+        "from": 64.0,
+        "to": 65.63,
+        "secs": 1.63,
+        "to_end": false
+      },
+      {
+        "from": 72.83,
+        "to": 73.83,
+        "secs": 1.0,
+        "to_end": false
+      }
+    ],
+    "flat": [],
+    "median_step": 0.957
+  },
+  "cuts_vs_plan": null,
+  "audio": {
+    "lufs": -14.5,
+    "true_peak": -1.4,
+    "loudest_at": 28.6,
+    "loudest_db": -7.6,
+    "p90_db": -11.4,
+    "silence_threshold_db": -30.0,
+    "silences": [
+      {
+        "from": 5.2,
+        "to": 5.85
+      },
+      {
+        "from": 7.15,
+        "to": 7.6
+      },
+      {
+        "from": 11.55,
+        "to": 14.05
+      },
+      {
+        "from": 18.4,
+        "to": 19.05
+      },
+      {
+        "from": 23.8,
+        "to": 24.75
+      },
+      {
+        "from": 27.85,
+        "to": 28.45
+      },
+      {
+        "from": 32.1,
+        "to": 32.65
+      },
+      {
+        "from": 35.85,
+        "to": 36.75
+      },
+      {
+        "from": 41.15,
+        "to": 41.9
+      },
+      {
+        "from": 43.85,
+        "to": 44.45
+      },
+      {
+        "from": 50.95,
+        "to": 51.9
+      },
+      {
+        "from": 56.35,
+        "to": 56.95
+      },
+      {
+        "from": 59.55,
+        "to": 60.0
+      },
+      {
+        "from": 61.75,
+        "to": 62.85
+      },
+      {
+        "from": 64.4,
+        "to": 64.9
+      },
+      {
+        "from": 69.45,
+        "to": 69.95
+      },
+      {
+        "from": 72.95,
+        "to": 74.45
+      },
+      {
+        "from": 78.35,
+        "to": 78.95
+      },
+      {
+        "from": 83.4,
+        "to": 83.9
+      },
+      {
+        "from": 86.3,
+        "to": 86.7
+      }
+    ],
+    "silence_before_peak": true,
+    "planned_silences": []
+  },
+  "texts": [],
+  "sheets": {
+    "beats": "qa/beats_sheet.jpg",
+    "phone": "qa/phone_sheet.jpg",
+    "hook": "qa/hook_sheet.jpg"
+  },
+  "checks": [
+    {
+      "level": "PASS",
+      "check": "frame 0",
+      "detail": "mean 199.4, contrast 63.4; still confirm it's a finished composition"
+    },
+    {
+      "level": "PASS",
+      "check": "single-frame flashes",
+      "detail": "none"
+    },
+    {
+      "level": "WARN",
+      "check": "pops",
+      "detail": "small spikes at [4.8, 4.933, 5.0, 5.067, 5.267, 5.333, 5.467, 5.667, 5.867, 17.633, 17.833, 17.933, 51.367, 62.567, 79.733, 81.0]: intended hits, or glitches/stray transitions?"
+    },
+    {
+      "level": "INFO",
+      "check": "detected cuts",
+      "detail": "[4.167, 13.967, 24.333, 36.233, 42.367, 67.2, 73.833]"
+    },
+    {
+      "level": "WARN",
+      "check": "frozen stretch",
+      "detail": "12.27-13.93 s (1.67 s): designed hold or dead air?"
+    },
+    {
+      "level": "WARN",
+      "check": "frozen stretch",
+      "detail": "22.73-24.33 s (1.6 s): designed hold or dead air?"
+    },
+    {
+      "level": "WARN",
+      "check": "frozen stretch",
+      "detail": "34.83-36.23 s (1.4 s): designed hold or dead air?"
+    },
+    {
+      "level": "WARN",
+      "check": "frozen stretch",
+      "detail": "50.0-51.37 s (1.37 s): designed hold or dead air?"
+    },
+    {
+      "level": "WARN",
+      "check": "frozen stretch",
+      "detail": "60.87-62.57 s (1.7 s): designed hold or dead air?"
+    },
+    {
+      "level": "WARN",
+      "check": "frozen stretch",
+      "detail": "64.0-65.63 s (1.63 s): designed hold or dead air?"
+    },
+    {
+      "level": "WARN",
+      "check": "frozen stretch",
+      "detail": "72.83-73.83 s (1.0 s): designed hold or dead air?"
+    },
+    {
+      "level": "PASS",
+      "check": "loudness",
+      "detail": "-14.5 LUFS (target -14.0 +/-1), true peak -1.4 dBTP (<= -1.0)"
+    },
+    {
+      "level": "INFO",
+      "check": "loudest moment",
+      "detail": "loudest 100 ms at 28.6 s (-7.6 dBFS); is this the payoff?"
+    },
+    {
+      "level": "PASS",
+      "check": "silence before peak",
+      "detail": "silences >= 0.4 s below -30.0 dBFS: [{'from': 5.2, 'to': 5.85}, {'from': 7.15, 'to': 7.6}, {'from': 11.55, 'to': 14.05}, {'from': 18.4, 'to': 19.05}, {'from': 23.8, 'to': 24.75}, {'from': 27.85, 'to': 28.45}, {'from': 32.1, 'to': 32.65}, {'from': 35.85, 'to': 36.75}]"
+    }
+  ]
+}
