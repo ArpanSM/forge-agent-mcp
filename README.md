@@ -188,13 +188,12 @@ itself stays offline unless you run `make eval-live`.
 
 ## Demo and screenshots
 
-- [60–90 second script](docs/demo-script.md) and the 5-minute walkthrough script — **video
-  placeholder: recording in progress, link added at release.**
+- [60–90 second walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.0/forge-agent-mcp-demo.mp4) and the [5-minute walkthrough script](docs/demo-script.md).
 - [Review queue](docs/screenshots/queue.png)
 - [Case detail with flags and recommendation](docs/screenshots/case-detail.png)
 - [Every field cites a document, page, box and quote](docs/screenshots/citations.png)
 - [Decision and audit chain](docs/screenshots/decision-audit.png)
-- [Evaluation summary](docs/screenshots/eval-table.png)
+- [Evaluation summary](docs/screenshots/eval-table.png) — a representative run; the committed report is the source of truth
 
 The demo uses fictional Northwind Freight Capital and its carriers. Every PDF carries a
 `SYNTHETIC` watermark, and no real person, carrier, bank account or document appears

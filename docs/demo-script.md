@@ -191,7 +191,7 @@ development numbers, not a production benchmark.
 
 ## B-roll and screenshots
 
-The four stills in [`screenshots/`](screenshots/) can be used as thumbnails or cutaways:
+The five stills in [`screenshots/`](screenshots/) can be used as thumbnails or cutaways:
 
 - `queue.png` — the two pending cases and flag counts.
 - `case-detail.png` — documents, cited fields, flags and recommendation.
