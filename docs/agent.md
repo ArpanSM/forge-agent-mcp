@@ -1,5 +1,7 @@
 # Agent and reviewer console
 
+**For:** engineers running or reviewing the agent and console. **Status:** current for v0.1.1.
+
 The agent is a LangGraph case runner. The console is the human boundary in front of it.
 Both use the MCP gateway for business state and side effects; neither writes the CRM or
 audit tables directly.

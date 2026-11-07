@@ -1,5 +1,7 @@
 # MCP gateway
 
+**For:** engineers integrating with or reviewing the gateway. **Status:** current for v0.1.1.
+
 The gateway is one FastMCP 4.1.6 server (MCP Python SDK 2.3.0) exposing eight typed
 business tools over Streamable HTTP and stdio. HTTP is the security boundary; stdio is a
 trusted local convenience and **skips authentication and scopes**.

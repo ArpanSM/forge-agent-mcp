@@ -1,5 +1,9 @@
 # Demo script
 
+**What this is:** the script and shot list for the 87-second narrated walkthrough and the
+30-second launch film. **For:** anyone recording, editing or reviewing the demo. **Status:**
+matches the v0.1.1 demo assets.
+
 **Recorded walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4
 
 

@@ -1,19 +1,31 @@
 # Case study: an underwriting agent that cannot approve itself
 
+> **In one paragraph:** A synthetic freight-underwriting agent that extracts, checks and
+> recommends a decision — but cannot approve it. The project measures the difference between
+> a naive prompt and a guarded pipeline on the same cases, and fails release if a safety gate
+> breaks.
+>
+> **For:** clients evaluating a document-workflow build, and engineers reviewing a
+> human-in-the-loop agent design.
+>
+> **Proof:** all six release gates pass on the fixed pipeline; the naive baseline fails all
+> six. The fixed pipeline also blocks all six approval probes and agrees with the oracle on
+> all four held-out cases.
+
 **Code:** https://github.com/ArpanSM/forge-agent-mcp
 **Walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4
 **Evaluation:** [full report](evals/agent-eval.md)
 
 ## The problem
 
-A freight factor underwrites small carriers and buys their invoices. The packet is ordinary
-document work: an application, W-9, certificate of insurance, bank letter, authority
-snapshot, rate confirmation, BOL, POD and invoice. The decision is not ordinary. An
-underwriter has to check that the legal name, EIN and MC/DOT agree across documents, that
-insurance is current and above the minimum, that authority is active and old enough, that
-the bank account has not just changed, that the invoice is not a duplicate, and that the
-invoice arithmetic matches the rate confirmation. Then they write a summary and update the
-CRM.
+A freight factor — a company that buys small carriers' invoices — underwrites those carriers
+before funding them. The packet is ordinary document work: an application, W-9, certificate
+of insurance, bank letter, authority snapshot, rate confirmation, BOL, POD and invoice. The
+decision is not ordinary. An underwriter has to check that the legal name, EIN and MC/DOT
+agree across documents, that insurance is current and above the minimum, that authority is
+active and old enough, that the bank account has not just changed, that the invoice is not a
+duplicate, and that the invoice arithmetic matches the rate confirmation. Then they write a
+summary and update the CRM.
 
 The failure modes are expensive and quiet. A plausible packet with an expired policy gets
 approved because the model reads the dates wrong. The same invoice gets funded twice because

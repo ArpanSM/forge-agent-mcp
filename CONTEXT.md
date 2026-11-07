@@ -1,5 +1,8 @@
 # Domain context
 
+**For:** engineers and reviewers who need the freight-factoring vocabulary and the synthetic
+world. **Status:** matches the v0.1.1 corpus and gateway.
+
 This file is the shared vocabulary for the freight underwriting agent and MCP gateway. It is intentionally narrow: it covers the synthetic freight-factoring workflow, the agent states and the gateway contract.
 
 **Clean-room:** all companies, carriers, people, documents, bank details, MC/DOT numbers and decisions in this repository are synthetic. No employer code, names, metrics, screenshots or retail workflows are used.

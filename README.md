@@ -1,34 +1,62 @@
 # Forge Agent + MCP
 
-A freight underwriting agent and an MCP business-tool gateway, built as a synthetic,
-local proof of a document workflow that stops for a human before it changes anything.
+**An AI agent that processes freight-insurance paperwork, then stops for a human before it
+approves the case.**
 
-**Status:** built, evaluated offline, and demonstrated locally. This is a portfolio proof,
-not a production service.
+**Who it's for:** teams that receive document packets and need an agent to extract, check and
+recommend without letting it approve its own work — and engineers reviewing the approval and
+audit design.
 
-- [87-second narrated walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4)
-- [30-second launch film](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-launch.mp4)
-- [Case study](docs/case-study.md)
-- [Learning map](docs/learning/agent-mcp.md)
-- [Full evaluation report](docs/evals/agent-eval.md)
-- [Demo script](docs/demo-script.md)
-- [Spec and build tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
+**Status:** evaluated · demo local. Portfolio proof, not production.
+
+**Start here:**
+
+- **Client or evaluator:** [87-second walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4) → [case study](docs/case-study.md) → [what I can do for a client](#what-i-can-do-for-a-client)
+- **Engineer:** [how it works](#how-it-works) → [evaluation report](docs/evals/agent-eval.md) → [spec and build tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
+- **Running it locally:** [quickstart](#quickstart) · [demo screenshots](#demo-and-screenshots)
 
 ## The problem
 
-Freight factors underwrite small carriers and buy their invoices. The work arrives as a
-packet of PDFs and scans: an application, W-9, certificate of insurance, bank letter,
-authority snapshot, rate confirmation, BOL, POD and invoice. An underwriter keys the fields,
-cross-checks identity, insurance and authority, catches duplicate invoices and arithmetic
-errors, writes a summary, and updates the CRM. It is slow, inconsistent, and difficult to
-audit afterwards. A chat assistant does not fix that. The agent needs typed business tools,
-scoped permissions, a human approval before any side effect, and a replay-safe audit trail.
+A freight factor — a company that buys small carriers' invoices — underwrites those carriers
+before funding them. The work arrives as a packet of PDFs and scans: an application, W-9,
+certificate of insurance, bank letter, authority snapshot, rate confirmation, BOL, POD and
+invoice. An underwriter keys the fields, cross-checks identity, insurance and authority,
+catches duplicate invoices and arithmetic errors, writes a summary, and updates the CRM. It is
+slow, inconsistent, and difficult to audit afterwards. A chat assistant does not fix that.
+The agent needs typed business tools, scoped permissions, a human approval before the
+decision is committed, and a replay-safe audit trail.
 
 This project proves that workflow can be built end to end with synthetic data, a free local
 model, and no paid infrastructure. It also measures the difference between a naive prompt
 and a guarded pipeline on the same cases, and it fails the release if any safety gate breaks.
 
-## Architecture
+## What it proves
+
+- All six release gates pass on the guarded pipeline; the naive baseline fails all six.
+- Classification, field extraction, citations and audit completeness go from 0% to 100%;
+  duplicate writes and approval bypasses go from 100% to 0%.
+- The agent cannot approve itself: the decision write needs a console-minted, single-use
+  approval token bound to the case, payload and expiry.
+
+**Caveat:** synthetic corpus, offline fake provider. The 100% numbers measure the pipeline
+contract on known templates, not model quality on messy scans. Full caveats in
+[Limits](#limits) and the [evaluation report](docs/evals/agent-eval.md).
+
+## What I can do for a client
+
+**A document-workflow reliability review (3–5 days).** I take a packet workflow that already
+has a demo or a prototype, reproduce the unsafe cases, and write down where the model is
+allowed to act and where a deterministic check or a human must intervene. You get a ranked
+failure list, a small regression set, and a before/after evaluation.
+
+**A fixed-scope agent build.** Typed tools, scoped tokens, a human approval gate, idempotent
+writes and an audit trail around one workflow. The deliverable is a working local slice with
+a measured report, not a chat demo that only handles the happy path.
+
+If that is the problem you have, the fastest next step is a short call and three packets or
+failure cases from your current process.
+
+## How it works
 
 ```mermaid
 flowchart LR
@@ -203,40 +231,26 @@ anywhere in the repository.
 
 ## Limits
 
-- The corpus is synthetic: 8 fictional carriers, 16 cases, written by the same generator
-  that produces the labels. It is a correctness harness, not a sample of real freight
-  packets.
-- The offline evaluation uses a deterministic fake provider and a template parser. The fixed
-  pipeline's 100% extraction and citation numbers measure the pipeline contract on known
-  templates, not model quality on messy scans. A live-model run is optional and not part of
-  the release gate.
-- There is no LLM judge, no real sanctions/authority/bank integration, no fraud model and no
-  money movement. "CRM stage" is a local SQLite row.
-- The demo is local only. The approval flow, scopes and audit are real code, but the
-  deployment, identity provider and TLS are not production-grade.
-- Latency is measured on one machine with the in-process gateway; it is not a capacity
-  benchmark.
+- The corpus is synthetic: 8 fictional carriers, 16 cases, written by the same generator that
+  produces the labels. It is a correctness harness, not a sample of real freight packets.
+- The offline evaluation uses a deterministic fake provider and a template parser; the 100%
+  extraction and citation numbers measure the pipeline contract on known templates, not model
+  quality on messy scans. There is no LLM judge, no real sanctions/authority/bank integration,
+  no fraud model and no money movement.
+- The demo is local only. The approval flow, scopes and audit are real code, but deployment,
+  identity provider and TLS are not production-grade; latency is measured on one machine, not
+  a capacity benchmark.
 
-## What I can do for a client
-
-**A document-workflow reliability review (3–5 days).** I take a packet workflow that already
-has a demo or a prototype, reproduce the unsafe cases, and write down where the model is
-allowed to act and where a deterministic check or a human must intervene. You get a ranked
-failure list, a small regression set, and a before/after evaluation.
-
-**A fixed-scope agent build.** Typed tools, scoped tokens, a human approval gate, idempotent
-writes and an audit trail around one workflow. The deliverable is a working local slice with
-a measured report, not a chat demo that only handles the happy path.
-
-If that is the problem you have, the fastest next step is a short call and three packets or
-failure cases from your current process.
+The full caveats, including the optional live-model path, are in the
+[evaluation report](docs/evals/agent-eval.md).
 
 ## Learn with me
 
 The [learning map](docs/learning/agent-mcp.md) connects the code to MCP transports and
 scopes, FastMCP, LangGraph state and interrupts, approval tokens, idempotency, audit,
 citation extraction, freight underwriting and evaluation. It includes a reading order and
-exercises. The [case study](docs/case-study.md) is the one-page version of the story.
+exercises. The [case study](docs/case-study.md) tells the same story with the problem,
+results and tradeoffs.
 
 ## Repository map
 
@@ -255,15 +269,23 @@ tests/         offline unit, integration and end-to-end tests
 
 ## Documentation
 
+**For clients and evaluators**
+
 - [Case study](docs/case-study.md)
-- [Evaluation report](docs/evals/agent-eval.md)
-- [Learning map](docs/learning/agent-mcp.md)
 - [Demo script](docs/demo-script.md)
+
+**For engineers**
+
+- [Evaluation report](docs/evals/agent-eval.md)
 - [Gateway guide](docs/gateway.md)
 - [Agent and console guide](docs/agent.md)
-- [Domain glossary](CONTEXT.md)
 - [Architecture decisions](docs/adr/)
-- [Agent working notes](AGENTS.md) and [coding standards](CODING_STANDARDS.md)
+- [Domain glossary](CONTEXT.md)
+
+**For contributors and learners**
+
+- [Learning map](docs/learning/agent-mcp.md)
+- [Agent working notes](AGENTS.md) · [coding standards](CODING_STANDARDS.md)
 
 ## Licence
 
