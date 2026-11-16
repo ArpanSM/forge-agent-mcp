@@ -4,6 +4,8 @@
 
 **Status:** evaluated · local demo. Synthetic data and a free local model. This is a working proof, not a production service.
 
+[![CI](https://github.com/ArpanSM/forge-agent-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ArpanSM/forge-agent-mcp/actions/workflows/ci.yml)
+
 The agent does the reading and checking. It classifies a carrier packet, pulls the fields with page and box citations, runs deterministic rules, and recommends a decision. The part that matters is the boundary. The agent can read, extract and recommend. It cannot approve its own work. A reviewer approves in a console, and the decision is written once through an MCP gateway with scoped tokens, an idempotency key and an append-only audit log.
 
 MCP is the Model Context Protocol, a standard way for an agent to call typed business tools instead of holding a database password and a long prompt. Here the gateway is the only path to the case store, the CRM stage and the audit log.
@@ -159,6 +161,19 @@ make install PIP_FLAGS="--user --break-system-packages"
 
 Optional live model paths are documented in [`docs/agent.md`](docs/agent.md). The evaluation itself stays offline unless you run `make eval-live`.
 
+### Docker
+
+The demo can also run in one container. This is for local use, not a deployment.
+
+```bash
+docker compose up --build
+# open http://127.0.0.1:8000
+```
+
+The container generates the synthetic corpus on first start and keeps its database in the
+`forge-data` volume. The Compose file exposes only the console port; the gateway stays inside
+the container.
+
 ## Screenshots
 
 All screenshots come from the local demo and the synthetic Northwind corpus.
@@ -186,6 +201,9 @@ src/forge_agent_mcp/
   evals/       baseline, fixed pipeline, metrics, gates and reports
 docs/          case study, eval report, learning map, demo script, ADRs
 tests/         offline unit, integration and end-to-end tests
+.github/       CI, issue templates and the pull-request template
+Dockerfile     local demo image
+server.json    draft MCP registry metadata (not published)
 ```
 
 ## Limits
@@ -204,8 +222,15 @@ These are demo limits, not hidden gaps. The [production path](docs/production-pa
 - [Gateway guide](docs/gateway.md): tools, scopes, approval tokens, idempotency and audit.
 - [Agent and console guide](docs/agent.md): the eight stages, interrupt/resume and the reviewer UI.
 - [Production path](docs/production-path.md): what is missing for a real deployment.
+- [MCP registry metadata](docs/mcp-registry.md): the draft manifest and why it is not published.
 - [Architecture decisions](docs/adr/)
 - [Domain glossary](CONTEXT.md)
+
+**Project**
+
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 **Evidence**
 
@@ -215,18 +240,27 @@ These are demo limits, not hidden gaps. The [production path](docs/production-pa
 **Learning and contributing**
 
 - [Learning map](docs/learning/agent-mcp.md): reading order, concepts and exercises.
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [MCP registry metadata](docs/mcp-registry.md): draft, not published.
+- [Changelog](CHANGELOG.md)
 - [Agent working notes](AGENTS.md) · [coding standards](CODING_STANDARDS.md)
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) and [CODING_STANDARDS.md](CODING_STANDARDS.md) first. The short version:
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md),
+[AGENTS.md](AGENTS.md) and [CODING_STANDARDS.md](CODING_STANDARDS.md) first. The short version:
 
 - All carriers, people, documents and bank details are synthetic. Do not add real data.
 - Unit tests run offline. Never call a model or a network service from a unit test.
 - Run `make test`, `make lint` and `make eval` before opening a pull request.
 - Keep a change inside its ticket and do not change a decision recorded in an ADR without saying why.
 
-The GitHub Actions workflow runs the offline suite and the linter on every pull request.
+For a security report, read [SECURITY.md](SECURITY.md) first and use GitHub's private
+vulnerability reporting.
+
+The GitHub Actions workflow runs the linter, the offline test suite and the evaluation gates
+on every pull request.
 
 ## Licence
 
