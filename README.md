@@ -240,10 +240,6 @@ These are demo limits, not hidden gaps. The [production path](docs/production-pa
 **Learning and contributing**
 
 - [Learning map](docs/learning/agent-mcp.md): reading order, concepts and exercises.
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [MCP registry metadata](docs/mcp-registry.md): draft, not published.
-- [Changelog](CHANGELOG.md)
 - [Agent working notes](AGENTS.md) · [coding standards](CODING_STANDARDS.md)
 
 ## Contributing
