@@ -9,6 +9,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY corpus ./corpus
 RUN python -m pip install --no-cache-dir .
 
 RUN useradd --create-home --uid 10001 forge \
@@ -19,4 +20,4 @@ USER forge
 EXPOSE 8000
 
 # Local demo only: gateway, agent and reviewer console in one process.
-CMD ["python", "-m", "forge_agent_mcp.console", "demo", "--auto", "--serve"]
+CMD ["python", "-m", "forge_agent_mcp.console", "demo", "--auto", "--serve", "--keep"]

@@ -2,13 +2,13 @@
 
 > **In one paragraph:** A synthetic freight-underwriting agent that extracts, checks and
 > recommends a decision — but cannot approve it. The project measures the difference between
-> a naive prompt and a guarded pipeline on the same cases, and fails release if a safety gate
+> a naive prompt and the fixed pipeline on the same cases, and fails release if a safety gate
 > breaks.
 >
 > **For:** engineers and product people reviewing a human-in-the-loop agent design.
 >
 > **Proof:** all six release gates pass on the fixed pipeline; the naive baseline fails all
-> six. The fixed pipeline also blocks all six approval probes and agrees with the oracle on
+> six. The fixed pipeline also blocks all six approval probes and agrees with the expected answer on
 > all four held-out cases.
 
 **Code:** https://github.com/ArpanSM/forge-agent-mcp
@@ -22,11 +22,11 @@ wrong and Limitations are for anyone checking whether the design holds up.
 A freight factor — a company that buys small carriers' invoices — underwrites those carriers
 before funding them. The packet is ordinary document work: an application, W-9, certificate
 of insurance, bank letter, authority snapshot, rate confirmation, BOL, POD and invoice. The
-decision is not ordinary. An underwriter has to check that the legal name, EIN and MC/DOT
-agree across documents, that insurance is current and above the minimum, that authority is
-active and old enough, that the bank account has not just changed, that the invoice is not a
-duplicate, and that the invoice arithmetic matches the rate confirmation. Then they write a
-summary and update the CRM.
+decision is not ordinary. An underwriter checks that the legal name, tax ID (EIN) and trucking authority number
+(MC/DOT) agree across documents. They check that insurance is current and above the minimum,
+and that operating authority is active and old enough. They check that the bank account has
+not just changed, that the invoice is not a duplicate, and that the invoice arithmetic matches
+the rate confirmation. Then they write a summary and update the CRM.
 
 The failure modes are expensive and quiet. A plausible packet with an expired policy gets
 approved because the model reads the dates wrong. The same invoice gets funded twice because
@@ -48,8 +48,7 @@ measurable rather than describing them.
   without pretending it is production IAM.
 - **A human before every side effect.** The agent may read, extract and recommend. It may not
   decide.
-- **A release gate, not a vibe check.** Six safety metrics must pass before the evaluation is
-  called a release.
+- **Six safety metrics must pass before release.** The evaluation is a gate, not a report.
 
 ## Approach
 
@@ -72,7 +71,7 @@ The system is one LangGraph graph over a FastMCP gateway.
 7. **Execute** only after the console mints an approval token and a short-lived
    `freight:approve` bearer token. `create_decision` commits the decision, CRM stage,
    approval use, idempotency row and audit event in one transaction.
-8. **Verify** the audit chain and close.
+8. **Verify** the audit log and close.
 
 The gateway exposes eight typed tools with `freight:read`, `freight:write` and
 `freight:approve` scopes, a tenant check on every call, a spec-correct `403
@@ -101,37 +100,35 @@ then reports 4 held-out cases across 2 carriers separately. It runs offline: bot
 | Metric (12 eval cases) | Baseline | Fixed |
 |---|---:|---:|
 | Classification accuracy | 0.0% | **100.0%** |
-| Field F1, clean / noisy | 0.0% / 0.0% | **100.0% / 100.0%** |
+| Field accuracy (F1), clean / noisy | 0.0% / 0.0% | **100.0% / 100.0%** |
 | Citation accuracy | 0.0% | **100.0%** |
 | Hard-stop recall | 0.0% | **100.0%** |
 | False approves on hard stops | 100.0% | **0.0%** |
-| Decision agreement | 16.7% | **100.0%** |
+| Decision agreement with the expected answer | 16.7% | **100.0%** |
 | Approval bypass rate | 100.0% | **0.0%** |
 | Duplicate writes | 100.0% | **0.0%** |
 | Audit completeness | 0.0% | **100.0%** |
 | Injection resistance | 0.0% (0/2) | **100.0%** |
 | Tool-call success | n/a | **100.0%** (167 calls) |
 
+The baseline does not attempt classification, field extraction or citations, so its 0% in those rows means "not attempted", not "wrong".
+
 All six hard gates passed on the fixed pipeline and failed on the baseline. The baseline
 approved every hard stop, approved both injection cases, and duplicated every write on
 retry. The fixed pipeline declined all six hard stops, held both injection cases for
-documents, wrote once per case and verified every audit chain. The six approval probes
+documents, wrote once per case and verified every audit log. The six approval probes
 (blank, expired, mismatched case, mismatched decision, wrong payload, reused token) were all
 blocked.
 
 The four held-out cases across two carriers are reported separately. The fixed pipeline matched all four
-oracle decisions; the baseline matched one. They are not part of the release gate.
+expected decisions; the baseline matched one. They are not part of the release gate.
 
-**Caveats.** The corpus is synthetic and generated from the same templates as the labels, so
-the 100% extraction, field and citation numbers measure the pipeline contract on known
-templates, not model quality on messy real scans. The run is offline and one pass, with no
-LLM judge, no real sanctions/authority/bank integration and no real CRM. Latency is not a
-capacity benchmark. These are development numbers.
+**Caveats.** These are contract numbers on synthetic templates. The [Limitations](#limitations)
+section lists what they do not cover.
 
 ## What went wrong, and what changed
 
-A two-axis review of the implementation and the evaluation found four problems worth
-keeping in the story:
+A review of both the code and the evaluation found four problems worth keeping in the story:
 
 1. **The baseline ignored the model response.** The first baseline prompt comparison always
    approved, which made the fixed pipeline look better for the wrong reason. The baseline now
@@ -153,9 +150,9 @@ finished, and the checks found real holes.
 
 ## What this shows
 
-If an agent is going to touch document work, the demo is the easy part. The hard part is the
-boundary: what the model may do, what a rule must decide, who can approve, what happens on a
-retry, and how someone reconstructs the decision six months later.
+If an agent is going to touch document work, the demo is the easy part. The hard part is what
+the model may do, what a rule must decide, who can approve, what happens on a retry, and how
+someone reconstructs the decision six months later.
 
 The transferable pieces are:
 
@@ -175,7 +172,8 @@ for identity, storage, rate limits, tracing and document quality, and in what or
 - Offline `FakeProvider` and deterministic parser; live-model extraction quality is not
   measured by the release gate.
 - No LLM judge. Correctness is measured against generated ground truth, not human labels.
-- No real OFAC/FMCSA/bank/credit-bureau integration, no fraud ML, no money movement.
+- No real sanctions screening (OFAC), carrier authority (FMCSA), bank or credit-bureau
+  integration, no fraud ML, no money movement.
 - Local HS256 issuer, HMAC approval secret and SQLite; no OAuth 2.1, real IdP, TLS,
   revocation or rate limiting. These are production work.
 - Local demo only; no hosted API. The screenshots show the local console and its state.

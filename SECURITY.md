@@ -17,7 +17,7 @@ Include:
 - the commit or tag you tested;
 - whether the issue affects the gateway, the console, the agent or the evaluation.
 
-You should get an acknowledgement when I see it. This is a personal project, so there is no
+I aim to acknowledge reports within a few days. This is a personal project, so there is no
 bug bounty and no service-level promise.
 
 ## Scope

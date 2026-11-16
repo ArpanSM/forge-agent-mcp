@@ -3,15 +3,18 @@
 **What this is:** the draft `server.json` manifest for the official MCP registry.
 **For:** anyone checking whether the gateway is discoverable. **Status:** not published.
 
-The file is valid metadata, but the server is not in the registry. Two things are missing:
+The file is schema-valid metadata, but the package entry is a placeholder and the server is not in the registry. The CLI and the manifest are not packaged yet, so a registry client could not launch it. Three things are missing:
 
-1. **A published package.** The manifest points at the PyPI name `forge-agent-mcp`. The
-   package is not on PyPI yet. Publishing it needs an `mcp-name: io.github.ArpanSM/forge-agent-mcp`
-   line in the package README so the registry can verify ownership.
-2. **A public endpoint.** The demo runs on `127.0.0.1`. A remote entry needs a public HTTPS
+1. **A runnable package.** The manifest points at the PyPI name `forge-agent-mcp`. The
+   package is not on PyPI yet, has no console entry point, and does not ship the corpus
+   manifest. Treat the package block as a placeholder until that packaging work is done.
+2. **A published package and ownership mark.** Publishing needs an
+   `mcp-name: io.github.ArpanSM/forge-agent-mcp` line in the package README so the registry can
+   verify ownership.
+3. **A public endpoint.** The demo runs on `127.0.0.1`. A remote entry needs a public HTTPS
    URL and a deployment, which this repository does not have.
 
-When both exist, the publish flow is:
+When those exist, the publish flow is:
 
 ```bash
 mcp-publisher login github

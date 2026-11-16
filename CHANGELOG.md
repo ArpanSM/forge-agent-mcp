@@ -8,10 +8,8 @@ repository.
 
 ### Changed
 
-- The README is now a project page: outcome, proof, architecture, quickstart and limits. The
-  client offer moved out of the README.
-- The case study points at screenshots and the production path instead of ending with a sales
-  pitch.
+- The README is now a project page: outcome, proof, architecture, quickstart and limits.
+- The case study now links to screenshots and the production path.
 - Added a production-path note that lists the gap between the local demo and a real deployment.
 
 ### Added
@@ -23,8 +21,8 @@ repository.
 
 ### Removed
 
-- Public links to the demo videos while they are re-cut. The files stay in `demo-video/` and
-  the release assets are unchanged.
+- Removed public links to the demo videos while they are re-cut. The local renders stay
+  untracked in `demo-video/`; the release assets are unchanged.
 
 ## v0.1.1-demo - 2026-11-05
 
