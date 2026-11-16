@@ -4,9 +4,6 @@
 30-second launch film. **For:** anyone recording, editing or reviewing the demo. **Status:**
 matches the v0.1.1 demo assets.
 
-**Recorded walkthrough:** https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4
-
-
 Two recordings:
 
 1. a **60–90 second** portfolio walkthrough for the README and Upwork card;

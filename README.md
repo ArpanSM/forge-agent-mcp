@@ -11,7 +11,7 @@ audit design.
 
 **Start here:**
 
-- **Client or evaluator:** [87-second walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4) → [case study](docs/case-study.md) → [what I can do for a client](#what-i-can-do-for-a-client)
+- **Client or evaluator:** [case study](docs/case-study.md) → [what this proves](#what-it-proves) → [what I can do for a client](#what-i-can-do-for-a-client)
 - **Engineer:** [how it works](#how-it-works) → [evaluation report](docs/evals/agent-eval.md) → [spec and build tickets](https://github.com/ArpanSM/forge-agent-mcp/issues/1)
 - **Running it locally:** [quickstart](#quickstart) · [demo screenshots](#demo-and-screenshots)
 
@@ -217,8 +217,6 @@ itself stays offline unless you run `make eval-live`.
 
 ## Demo and screenshots
 
-- [87-second narrated walkthrough](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-demo.mp4) and the [5-minute walkthrough script](docs/demo-script.md).
-- [30-second launch film](https://github.com/ArpanSM/forge-agent-mcp/releases/download/v0.1.1-demo/forge-agent-mcp-launch.mp4) — a music-led companion cut about the approval gate.
 - [Review queue](docs/screenshots/queue.png)
 - [Case detail with flags and recommendation](docs/screenshots/case-detail.png)
 - [Every field cites a document, page, box and quote](docs/screenshots/citations.png)
