@@ -53,6 +53,9 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# The video tooling under demo-video/ is vendored skill code, not part of
+# the package. It has its own style and is not shipped.
+extend-exclude = ["demo-video"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

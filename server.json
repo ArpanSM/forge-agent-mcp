@@ -1,0 +1,27 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ArpanSM/forge-agent-mcp",
+  "title": "Forge Agent + MCP",
+  "description": "A synthetic freight underwriting agent with a human approval gate and an MCP tool gateway.",
+  "repository": {
+    "url": "https://github.com/ArpanSM/forge-agent-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "forge-agent-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "status": "draft",
+      "note": "Prepared for the MCP registry. The PyPI package and a public HTTP endpoint are not published yet."
+    }
+  }
+}

@@ -1,0 +1,16 @@
+services:
+  demo:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Local demo only. Override both secrets with real values outside this machine.
+      CONSOLE_HOST: 0.0.0.0
+      GATEWAY_HOST: 127.0.0.1
+      FORGE_APPROVAL_SECRET: ${FORGE_APPROVAL_SECRET:-local-demo-approval-secret-change-me}
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:-local-demo-jwt-secret-change-me}
+    volumes:
+      - forge-data:/app/data
+
+volumes:
+  forge-data:
