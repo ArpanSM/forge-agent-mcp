@@ -5,8 +5,7 @@
 > a naive prompt and a guarded pipeline on the same cases, and fails release if a safety gate
 > breaks.
 >
-> **For:** clients evaluating a document-workflow build, and engineers reviewing a
-> human-in-the-loop agent design.
+> **For:** engineers and product people reviewing a human-in-the-loop agent design.
 >
 > **Proof:** all six release gates pass on the fixed pipeline; the naive baseline fails all
 > six. The fixed pipeline also blocks all six approval probes and agrees with the oracle on
@@ -14,6 +13,9 @@
 
 **Code:** https://github.com/ArpanSM/forge-agent-mcp
 **Evaluation:** [full report](evals/agent-eval.md)
+
+**How to read this:** the problem and results are the short version. Approach, What went
+wrong and Limitations are for anyone checking whether the design holds up.
 
 ## The problem
 
@@ -77,6 +79,19 @@ The gateway exposes eight typed tools with `freight:read`, `freight:write` and
 insufficient_scope`, an idempotency store and an append-only audit log. HTTP is the security
 boundary. stdio skips auth and is documented as a trusted local convenience.
 
+## What it looks like
+
+| Review queue | A hold, with the evidence attached |
+|---|---|
+| ![The 16-case review queue](screenshots/queue.png) | ![Northgate invoice with two high flags](screenshots/case-detail.png) |
+
+| Cited fields | Decision and audit |
+|---|---|
+| ![Extracted fields with page and box citations](screenshots/citations.png) | ![Committed decision and audit events](screenshots/decision-audit.png) |
+
+The screenshots are from the local demo. The queue, the flags, the citations and the audit
+rows are all read from the same SQLite state that the gateway writes.
+
 ## Results
 
 `make eval` runs a naive baseline and the fixed pipeline over the same 12 evaluation cases,
@@ -136,11 +151,11 @@ keeping in the story:
 Each fix has a regression test. The review is part of the evidence: the first version looked
 finished, and the checks found real holes.
 
-## What it means for a client
+## What this shows
 
-If you are putting an agent in front of document work, the demo is not the hard part. The
-hard part is the boundary: what the model may do, what a rule must decide, who can approve,
-what happens on a retry, and how you reconstruct the decision six months later.
+If an agent is going to touch document work, the demo is the easy part. The hard part is the
+boundary: what the model may do, what a rule must decide, who can approve, what happens on a
+retry, and how someone reconstructs the decision six months later.
 
 The transferable pieces are:
 
@@ -151,9 +166,8 @@ The transferable pieces are:
 - citations that point at a page and a box, so a reviewer can check the value;
 - an evaluation with a naive baseline, held-out cases and gates that fail the release.
 
-That is a **3–5 day reliability review** for an existing prototype, or a **fixed-scope build**
-of one workflow with the same evidence. The next step is a short call and three packets or
-failure cases from your current process.
+The [production path](production-path.md) takes the next step: what a real deployment needs
+for identity, storage, rate limits, tracing and document quality, and in what order.
 
 ## Limitations
 
@@ -164,6 +178,6 @@ failure cases from your current process.
 - No real OFAC/FMCSA/bank/credit-bureau integration, no fraud ML, no money movement.
 - Local HS256 issuer, HMAC approval secret and SQLite; no OAuth 2.1, real IdP, TLS,
   revocation or rate limiting. These are production work.
-- Local demo only; no hosted API. The video is a walkthrough of the local console.
+- Local demo only; no hosted API. The screenshots show the local console and its state.
 - Held-out results are reported but do not gate the release, because four cases are too few
   to support a strong claim.
